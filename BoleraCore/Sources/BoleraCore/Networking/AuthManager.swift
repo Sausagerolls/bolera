@@ -1,0 +1,146 @@
+import Foundation
+import Security
+import Combine
+
+/// Persists Jellyfin server URL + access token + user id in the Keychain,
+/// and exposes login / logout to the rest of the app.
+public final class AuthManager: ObservableObject {
+    /// Process-wide singleton so non-SwiftUI scenes (CarPlay) can read auth state.
+    public static let shared = AuthManager()
+
+    public static let deviceId: String = {
+        if let existing = UserDefaults.standard.string(forKey: "bolera.deviceId") {
+            return existing
+        }
+        let new = UUID().uuidString
+        UserDefaults.standard.set(new, forKey: "bolera.deviceId")
+        return new
+    }()
+
+    public static let clientName = "Bolera"
+    public static let clientVersion = "1.0.0"
+    public static let deviceName: String = {
+        #if os(iOS)
+        return UIDeviceWrapper.modelName
+        #else
+        return "iOS Device"
+        #endif
+    }()
+
+    @Published public private(set) var isAuthenticated: Bool = false
+    @Published public private(set) var serverURL: URL?
+    @Published public private(set) var userId: String?
+    @Published public private(set) var userName: String?
+    @Published public private(set) var accessToken: String?
+
+    public init() {
+        load()
+    }
+
+    public func load() {
+        if let urlString = Keychain.get("server"),
+           let url = URL(string: urlString),
+           let token = Keychain.get("token"),
+           let uid = Keychain.get("userId") {
+            self.serverURL = url
+            self.accessToken = token
+            self.userId = uid
+            self.userName = Keychain.get("userName")
+            self.isAuthenticated = true
+        }
+    }
+
+    /// Builds the value used in the `Authorization: MediaBrowser ...` header.
+    public func authHeader() -> String {
+        var parts = [
+            "Client=\"\(Self.clientName)\"",
+            "Device=\"\(Self.deviceName)\"",
+            "DeviceId=\"\(Self.deviceId)\"",
+            "Version=\"\(Self.clientVersion)\""
+        ]
+        if let token = accessToken {
+            parts.append("Token=\"\(token)\"")
+        }
+        return "MediaBrowser " + parts.joined(separator: ", ")
+    }
+
+    public func login(server: URL, username: String, password: String) async throws {
+        let client = JellyfinClient(baseURL: server, auth: self)
+        let response = try await client.authenticate(username: username, password: password)
+        await MainActor.run {
+            self.serverURL = server
+            self.accessToken = response.AccessToken
+            self.userId = response.User.Id
+            self.userName = response.User.Name
+            Keychain.set(server.absoluteString, for: "server")
+            Keychain.set(response.AccessToken, for: "token")
+            Keychain.set(response.User.Id, for: "userId")
+            Keychain.set(response.User.Name, for: "userName")
+            self.isAuthenticated = true
+        }
+    }
+
+    public func logout() {
+        AudioPlayer.shared.stop()
+        Keychain.delete("server")
+        Keychain.delete("token")
+        Keychain.delete("userId")
+        Keychain.delete("userName")
+        NotificationCenter.default.post(name: Notification.Name("boleraDidLogout"), object: nil)
+        self.serverURL = nil
+        self.accessToken = nil
+        self.userId = nil
+        self.userName = nil
+        self.isAuthenticated = false
+    }
+}
+
+#if canImport(UIKit)
+import UIKit
+enum UIDeviceWrapper {
+    static var modelName: String { UIDevice.current.name }
+}
+#endif
+
+// MARK: - Keychain helper
+
+enum Keychain {
+    private static let service = "com.bolera.credentials"
+
+    static func set(_ value: String, for key: String) {
+        guard let data = value.data(using: .utf8) else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+        SecItemDelete(query as CFDictionary)
+        var insert = query
+        insert[kSecValueData as String] = data
+        SecItemAdd(insert as CFDictionary, nil)
+    }
+
+    static func get(_ key: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let str = String(data: data, encoding: .utf8) else { return nil }
+        return str
+    }
+
+    static func delete(_ key: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}

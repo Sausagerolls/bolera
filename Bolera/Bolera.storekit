@@ -1,0 +1,35 @@
+{
+  "identifier" : "BOLERA-IAP-CONFIG",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : true,
+      "internalID" : "00000000-0000-0000-0000-00000000B001",
+      "localizations" : [
+        {
+          "description" : "Unlock the full Bolera experience — 10-band EQ, library toggles, ignore tracks, and CarPlay (coming soon).",
+          "displayName" : "Bolera Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.giantmushroom.bolera.pro",
+      "referenceName" : "Bolera Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "0",
+    "_developerTeamID" : "",
+    "_disableDialogs" : false,
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

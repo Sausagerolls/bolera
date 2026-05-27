@@ -1,0 +1,54 @@
+# macOS
+.DS_Store
+*.swp
+
+# Xcode
+build/
+DerivedData/
+*.xcuserdatad
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+Packages/
+
+# Project-local build output
+.build/
+.build/iOSBuild/
+.build/DerivedData/
+
+# Bolera-specific generated content (large binary art assets, local caches)
+generated-images/
+docs/
+
+# CocoaPods / Carthage (not used, but keep blocked just in case)
+Pods/
+Carthage/Build/
+
+# Claude Code / editor tooling
+.claude/
+.vscode/
+.idea/
+
+# Python helper scripts — virtualenvs / caches
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Marketing build artefacts
+marketing/.cache/
+
+# Sensitive / local-only files
+secrets.json
+.env
+.env.local

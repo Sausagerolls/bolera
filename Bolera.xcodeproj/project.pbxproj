@@ -1,0 +1,776 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B0000001000000000000A001 /* BoleraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000001000000000000A001 /* BoleraApp.swift */; };
+		B0000008000000000000A008 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000008000000000000A008 /* Extensions.swift */; };
+		B0000009000000000000A009 /* ServerConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000009000000000000A009 /* ServerConnectionView.swift */; };
+		B000000A000000000000A00A /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000A000000000000A00A /* MainTabView.swift */; };
+		B000000B000000000000A00B /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000B000000000000A00B /* HomeView.swift */; };
+		B000000C000000000000A00C /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000C000000000000A00C /* LibraryView.swift */; };
+		B000000D000000000000A00D /* ArtistDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000D000000000000A00D /* ArtistDetailView.swift */; };
+		B000000E000000000000A00E /* AlbumDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000E000000000000A00E /* AlbumDetailView.swift */; };
+		B000000F000000000000A00F /* PlaylistDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000F000000000000A00F /* PlaylistDetailView.swift */; };
+		B0000010000000000000A010 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000010000000000000A010 /* SearchView.swift */; };
+		B0000011000000000000A011 /* MiniPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000011000000000000A011 /* MiniPlayerView.swift */; };
+		B0000012000000000000A012 /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000012000000000000A012 /* NowPlayingView.swift */; };
+		B0000013000000000000A013 /* QueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000013000000000000A013 /* QueueView.swift */; };
+		B0000014000000000000A014 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000014000000000000A014 /* SettingsView.swift */; };
+		B000001A000000000000A01A /* LyricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001A000000000000A01A /* LyricsView.swift */; };
+		B000001B000000000000A01B /* VisualizerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001B000000000000A01B /* VisualizerView.swift */; };
+		B000001C000000000000A01C /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001C000000000000A01C /* DownloadsView.swift */; };
+		B000001D000000000000A01D /* EQView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001D000000000000A01D /* EQView.swift */; };
+		B000001E000000000000A01E /* LastFmSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001E000000000000A01E /* LastFmSettingsView.swift */; };
+		B000001F000000000000A01F /* CarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001F000000000000A01F /* CarPlaySceneDelegate.swift */; };
+		B0000020000000000000A020 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0000020000000000000A020 /* Assets.xcassets */; };
+		B0000021000000000000A021 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0000021000000000000A021 /* Preview Assets.xcassets */; };
+		B0000025000000000000A025 /* BoleraCore in Frameworks */ = {isa = PBXBuildFile; productRef = H0000001000000000000H001 /* BoleraCore */; };
+		B0000030000000000000A030 /* PaywallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000030000000000000A030 /* PaywallView.swift */; };
+		B0000031000000000000A031 /* ProGated.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000031000000000000A031 /* ProGated.swift */; };
+		B0000032000000000000A032 /* LibraryTogglesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000032000000000000A032 /* LibraryTogglesView.swift */; };
+		B0000033000000000000A033 /* IgnoredTracksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000033000000000000A033 /* IgnoredTracksView.swift */; };
+		B0000034000000000000A034 /* IgnoreActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000034000000000000A034 /* IgnoreActions.swift */; };
+		B0000040000000000000A040 /* BoleraMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000040000000000000A040 /* BoleraMacApp.swift */; };
+		B0000041000000000000A041 /* MainWindow_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000041000000000000A041 /* MainWindow_Mac.swift */; };
+		B0000042000000000000A042 /* SidebarView_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000042000000000000A042 /* SidebarView_Mac.swift */; };
+		B0000043000000000000A043 /* ContentPane_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000043000000000000A043 /* ContentPane_Mac.swift */; };
+		B0000044000000000000A044 /* NowPlayingPane_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000044000000000000A044 /* NowPlayingPane_Mac.swift */; };
+		B0000045000000000000A045 /* MenuBarPlayer_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000045000000000000A045 /* MenuBarPlayer_Mac.swift */; };
+		B0000046000000000000A046 /* ServerConnectionView_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000046000000000000A046 /* ServerConnectionView_Mac.swift */; };
+		B0000047000000000000A047 /* SettingsWindow_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000047000000000000A047 /* SettingsWindow_Mac.swift */; };
+		B0000048000000000000A048 /* EQWindow_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000048000000000000A048 /* EQWindow_Mac.swift */; };
+		B0000049000000000000A049 /* PaywallView_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000049000000000000A049 /* PaywallView_Mac.swift */; };
+		B0000050000000000000A050 /* BoleraCore in Frameworks */ = {isa = PBXBuildFile; productRef = H0000002000000000000H002 /* BoleraCore */; };
+		B0000051000000000000A051 /* ImmersivePlayer_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000051000000000000A051 /* ImmersivePlayer_Mac.swift */; };
+		B0000052000000000000A052 /* MacNavCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000052000000000000A052 /* MacNavCoordinator.swift */; };
+		B0000053000000000000A053 /* AlbumDetail_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000053000000000000A053 /* AlbumDetail_Mac.swift */; };
+		B0000054000000000000A054 /* ArtistDetail_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000054000000000000A054 /* ArtistDetail_Mac.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A0000000000000000000A000 /* Bolera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bolera.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A0000001000000000000A001 /* BoleraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoleraApp.swift; sourceTree = "<group>"; };
+		A0000008000000000000A008 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
+		A0000009000000000000A009 /* ServerConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionView.swift; sourceTree = "<group>"; };
+		A000000A000000000000A00A /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		A000000B000000000000A00B /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		A000000C000000000000A00C /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		A000000D000000000000A00D /* ArtistDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistDetailView.swift; sourceTree = "<group>"; };
+		A000000E000000000000A00E /* AlbumDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetailView.swift; sourceTree = "<group>"; };
+		A000000F000000000000A00F /* PlaylistDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistDetailView.swift; sourceTree = "<group>"; };
+		A0000010000000000000A010 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
+		A0000011000000000000A011 /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerView.swift; sourceTree = "<group>"; };
+		A0000012000000000000A012 /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
+		A0000013000000000000A013 /* QueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueView.swift; sourceTree = "<group>"; };
+		A0000014000000000000A014 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A000001A000000000000A01A /* LyricsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsView.swift; sourceTree = "<group>"; };
+		A000001B000000000000A01B /* VisualizerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualizerView.swift; sourceTree = "<group>"; };
+		A000001C000000000000A01C /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
+		A000001D000000000000A01D /* EQView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EQView.swift; sourceTree = "<group>"; };
+		A000001E000000000000A01E /* LastFmSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LastFmSettingsView.swift; sourceTree = "<group>"; };
+		A000001F000000000000A01F /* CarPlaySceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlaySceneDelegate.swift; sourceTree = "<group>"; };
+		A0000020000000000000A020 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A0000021000000000000A021 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		A0000022000000000000A022 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A0000023000000000000A023 /* Bolera.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Bolera.entitlements; sourceTree = "<group>"; };
+		A0000026000000000000A026 /* BoleraCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BoleraCore; path = ../BoleraCore; sourceTree = "<group>"; };
+		A0000030000000000000A030 /* PaywallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallView.swift; sourceTree = "<group>"; };
+		A0000031000000000000A031 /* ProGated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProGated.swift; sourceTree = "<group>"; };
+		A0000032000000000000A032 /* LibraryTogglesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryTogglesView.swift; sourceTree = "<group>"; };
+		A0000033000000000000A033 /* IgnoredTracksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IgnoredTracksView.swift; sourceTree = "<group>"; };
+		A0000034000000000000A034 /* IgnoreActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IgnoreActions.swift; sourceTree = "<group>"; };
+		A0000040000000000000A040 /* BoleraMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoleraMacApp.swift; sourceTree = "<group>"; };
+		A0000041000000000000A041 /* MainWindow_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindow_Mac.swift; sourceTree = "<group>"; };
+		A0000042000000000000A042 /* SidebarView_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView_Mac.swift; sourceTree = "<group>"; };
+		A0000043000000000000A043 /* ContentPane_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentPane_Mac.swift; sourceTree = "<group>"; };
+		A0000044000000000000A044 /* NowPlayingPane_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingPane_Mac.swift; sourceTree = "<group>"; };
+		A0000045000000000000A045 /* MenuBarPlayer_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarPlayer_Mac.swift; sourceTree = "<group>"; };
+		A0000046000000000000A046 /* ServerConnectionView_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionView_Mac.swift; sourceTree = "<group>"; };
+		A0000047000000000000A047 /* SettingsWindow_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindow_Mac.swift; sourceTree = "<group>"; };
+		A0000048000000000000A048 /* EQWindow_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EQWindow_Mac.swift; sourceTree = "<group>"; };
+		A0000049000000000000A049 /* PaywallView_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallView_Mac.swift; sourceTree = "<group>"; };
+		A000004A000000000000A04A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A000004B000000000000A04B /* Bolera-mac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Bolera-mac.entitlements"; sourceTree = "<group>"; };
+		A000004C000000000000A04C /* Bolera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bolera.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A0000051000000000000A051 /* ImmersivePlayer_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImmersivePlayer_Mac.swift; sourceTree = "<group>"; };
+		A0000052000000000000A052 /* MacNavCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacNavCoordinator.swift; sourceTree = "<group>"; };
+		A0000053000000000000A053 /* AlbumDetail_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetail_Mac.swift; sourceTree = "<group>"; };
+		A0000054000000000000A054 /* ArtistDetail_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistDetail_Mac.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D0000001000000000000D001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0000025000000000000A025 /* BoleraCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D0000005000000000000D005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0000050000000000000A050 /* BoleraCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		C0000000000000000000C000 = {
+			isa = PBXGroup;
+			children = (
+				C0000001000000000000C001 /* Bolera */,
+				C0001001000000000000C101 /* Bolera-mac */,
+				C0000100000000000000C100 /* Packages */,
+				C0000099000000000000C099 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C0000001000000000000C001 /* Bolera */ = {
+			isa = PBXGroup;
+			children = (
+				A0000001000000000000A001 /* BoleraApp.swift */,
+				C0000003000000000000C003 /* Services */,
+				C0000004000000000000C004 /* Utilities */,
+				C0000005000000000000C005 /* Views */,
+				A0000020000000000000A020 /* Assets.xcassets */,
+				C0000098000000000000C098 /* Preview Content */,
+				A0000022000000000000A022 /* Info.plist */,
+				A0000023000000000000A023 /* Bolera.entitlements */,
+			);
+			path = Bolera;
+			sourceTree = "<group>";
+		};
+		C0000003000000000000C003 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A000001F000000000000A01F /* CarPlaySceneDelegate.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		C0000004000000000000C004 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				A0000008000000000000A008 /* Extensions.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		C0000005000000000000C005 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				C0000006000000000000C006 /* Auth */,
+				C0000007000000000000C007 /* Main */,
+				C0000008000000000000C008 /* Home */,
+				C0000009000000000000C009 /* Library */,
+				C000000A000000000000C00A /* Search */,
+				C000000B000000000000C00B /* Player */,
+				C000000C000000000000C00C /* Settings */,
+				C0000200000000000000C200 /* Pro */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		C0000006000000000000C006 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				A0000009000000000000A009 /* ServerConnectionView.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		C0000007000000000000C007 /* Main */ = {
+			isa = PBXGroup;
+			children = (
+				A000000A000000000000A00A /* MainTabView.swift */,
+			);
+			path = Main;
+			sourceTree = "<group>";
+		};
+		C0000008000000000000C008 /* Home */ = {
+			isa = PBXGroup;
+			children = (
+				A000000B000000000000A00B /* HomeView.swift */,
+			);
+			path = Home;
+			sourceTree = "<group>";
+		};
+		C0000009000000000000C009 /* Library */ = {
+			isa = PBXGroup;
+			children = (
+				A000000C000000000000A00C /* LibraryView.swift */,
+				A000000D000000000000A00D /* ArtistDetailView.swift */,
+				A000000E000000000000A00E /* AlbumDetailView.swift */,
+				A000000F000000000000A00F /* PlaylistDetailView.swift */,
+			);
+			path = Library;
+			sourceTree = "<group>";
+		};
+		C000000A000000000000C00A /* Search */ = {
+			isa = PBXGroup;
+			children = (
+				A0000010000000000000A010 /* SearchView.swift */,
+			);
+			path = Search;
+			sourceTree = "<group>";
+		};
+		C000000B000000000000C00B /* Player */ = {
+			isa = PBXGroup;
+			children = (
+				A0000011000000000000A011 /* MiniPlayerView.swift */,
+				A0000012000000000000A012 /* NowPlayingView.swift */,
+				A0000013000000000000A013 /* QueueView.swift */,
+				A000001A000000000000A01A /* LyricsView.swift */,
+				A000001B000000000000A01B /* VisualizerView.swift */,
+			);
+			path = Player;
+			sourceTree = "<group>";
+		};
+		C000000C000000000000C00C /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				A0000014000000000000A014 /* SettingsView.swift */,
+				A000001C000000000000A01C /* DownloadsView.swift */,
+				A000001D000000000000A01D /* EQView.swift */,
+				A000001E000000000000A01E /* LastFmSettingsView.swift */,
+				A0000032000000000000A032 /* LibraryTogglesView.swift */,
+				A0000033000000000000A033 /* IgnoredTracksView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		C0000098000000000000C098 /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				A0000021000000000000A021 /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		C0000099000000000000C099 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A0000000000000000000A000 /* Bolera.app */,
+				A000004C000000000000A04C /* Bolera.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		C0000100000000000000C100 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				A0000026000000000000A026 /* BoleraCore */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		C0000200000000000000C200 /* Pro */ = {
+			isa = PBXGroup;
+			children = (
+				A0000030000000000000A030 /* PaywallView.swift */,
+				A0000031000000000000A031 /* ProGated.swift */,
+				A0000034000000000000A034 /* IgnoreActions.swift */,
+			);
+			path = Pro;
+			sourceTree = "<group>";
+		};
+		C0001001000000000000C101 /* Bolera-mac */ = {
+			isa = PBXGroup;
+			children = (
+				A0000040000000000000A040 /* BoleraMacApp.swift */,
+				C0001002000000000000C102 /* Views */,
+				A000004A000000000000A04A /* Info.plist */,
+				A000004B000000000000A04B /* Bolera-mac.entitlements */,
+			);
+			path = "Bolera-mac";
+			sourceTree = "<group>";
+		};
+		C0001002000000000000C102 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A0000041000000000000A041 /* MainWindow_Mac.swift */,
+				A0000042000000000000A042 /* SidebarView_Mac.swift */,
+				A0000043000000000000A043 /* ContentPane_Mac.swift */,
+				A0000044000000000000A044 /* NowPlayingPane_Mac.swift */,
+				A0000045000000000000A045 /* MenuBarPlayer_Mac.swift */,
+				A0000046000000000000A046 /* ServerConnectionView_Mac.swift */,
+				A0000051000000000000A051 /* ImmersivePlayer_Mac.swift */,
+				A0000052000000000000A052 /* MacNavCoordinator.swift */,
+				A0000053000000000000A053 /* AlbumDetail_Mac.swift */,
+				A0000054000000000000A054 /* ArtistDetail_Mac.swift */,
+				C0001003000000000000C103 /* Settings */,
+				C0001004000000000000C104 /* Pro */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		C0001003000000000000C103 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				A0000047000000000000A047 /* SettingsWindow_Mac.swift */,
+				A0000048000000000000A048 /* EQWindow_Mac.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		C0001004000000000000C104 /* Pro */ = {
+			isa = PBXGroup;
+			children = (
+				A0000049000000000000A049 /* PaywallView_Mac.swift */,
+			);
+			path = Pro;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F0000001000000000000F001 /* Bolera */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E0000003000000000000E003 /* Build configuration list for PBXNativeTarget "Bolera" */;
+			buildPhases = (
+				D0000002000000000000D002 /* Sources */,
+				D0000001000000000000D001 /* Frameworks */,
+				D0000003000000000000D003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Bolera;
+			packageProductDependencies = (
+				H0000001000000000000H001 /* BoleraCore */,
+			);
+			productName = Bolera;
+			productReference = A0000000000000000000A000 /* Bolera.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F0000002000000000000F002 /* Bolera-mac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E0000006000000000000E006 /* Build configuration list for PBXNativeTarget "Bolera-mac" */;
+			buildPhases = (
+				D0000004000000000000D004 /* Sources */,
+				D0000005000000000000D005 /* Frameworks */,
+				D0000006000000000000D006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Bolera-mac";
+			packageProductDependencies = (
+				H0000002000000000000H002 /* BoleraCore */,
+			);
+			productName = "Bolera-mac";
+			productReference = A000004C000000000000A04C /* Bolera.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		F0000000000000000000F000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					F0000001000000000000F001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = E0000000000000000000E000 /* Build configuration list for PBXProject "Bolera" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = C0000000000000000000C000;
+			packageReferences = (
+				G0000001000000000000G001 /* XCLocalSwiftPackageReference "BoleraCore" */,
+			);
+			productRefGroup = C0000099000000000000C099 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F0000001000000000000F001 /* Bolera */,
+				F0000002000000000000F002 /* Bolera-mac */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D0000003000000000000D003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0000021000000000000A021 /* Preview Assets.xcassets in Resources */,
+				B0000020000000000000A020 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D0000006000000000000D006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		D0000002000000000000D002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0000001000000000000A001 /* BoleraApp.swift in Sources */,
+				B0000008000000000000A008 /* Extensions.swift in Sources */,
+				B0000009000000000000A009 /* ServerConnectionView.swift in Sources */,
+				B000000A000000000000A00A /* MainTabView.swift in Sources */,
+				B000000B000000000000A00B /* HomeView.swift in Sources */,
+				B000000C000000000000A00C /* LibraryView.swift in Sources */,
+				B000000D000000000000A00D /* ArtistDetailView.swift in Sources */,
+				B000000E000000000000A00E /* AlbumDetailView.swift in Sources */,
+				B000000F000000000000A00F /* PlaylistDetailView.swift in Sources */,
+				B0000010000000000000A010 /* SearchView.swift in Sources */,
+				B0000011000000000000A011 /* MiniPlayerView.swift in Sources */,
+				B0000012000000000000A012 /* NowPlayingView.swift in Sources */,
+				B0000013000000000000A013 /* QueueView.swift in Sources */,
+				B0000014000000000000A014 /* SettingsView.swift in Sources */,
+				B000001A000000000000A01A /* LyricsView.swift in Sources */,
+				B000001B000000000000A01B /* VisualizerView.swift in Sources */,
+				B000001C000000000000A01C /* DownloadsView.swift in Sources */,
+				B000001D000000000000A01D /* EQView.swift in Sources */,
+				B000001E000000000000A01E /* LastFmSettingsView.swift in Sources */,
+				B000001F000000000000A01F /* CarPlaySceneDelegate.swift in Sources */,
+				B0000030000000000000A030 /* PaywallView.swift in Sources */,
+				B0000031000000000000A031 /* ProGated.swift in Sources */,
+				B0000032000000000000A032 /* LibraryTogglesView.swift in Sources */,
+				B0000033000000000000A033 /* IgnoredTracksView.swift in Sources */,
+				B0000034000000000000A034 /* IgnoreActions.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D0000004000000000000D004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0000040000000000000A040 /* BoleraMacApp.swift in Sources */,
+				B0000041000000000000A041 /* MainWindow_Mac.swift in Sources */,
+				B0000042000000000000A042 /* SidebarView_Mac.swift in Sources */,
+				B0000043000000000000A043 /* ContentPane_Mac.swift in Sources */,
+				B0000044000000000000A044 /* NowPlayingPane_Mac.swift in Sources */,
+				B0000045000000000000A045 /* MenuBarPlayer_Mac.swift in Sources */,
+				B0000046000000000000A046 /* ServerConnectionView_Mac.swift in Sources */,
+				B0000047000000000000A047 /* SettingsWindow_Mac.swift in Sources */,
+				B0000048000000000000A048 /* EQWindow_Mac.swift in Sources */,
+				B0000049000000000000A049 /* PaywallView_Mac.swift in Sources */,
+				B0000051000000000000A051 /* ImmersivePlayer_Mac.swift in Sources */,
+				B0000052000000000000A052 /* MacNavCoordinator.swift in Sources */,
+				B0000053000000000000A053 /* AlbumDetail_Mac.swift in Sources */,
+				B0000054000000000000A054 /* ArtistDetail_Mac.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		E0000001000000000000E001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		E0000002000000000000E002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		E0000004000000000000E004 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Bolera/Bolera.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Bolera/Preview Content\"";
+				DEVELOPMENT_TEAM = J4UJD4Z33J;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Bolera/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Bolera;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.giantmushroom.bolera;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E0000005000000000000E005 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Bolera/Bolera.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Bolera/Preview Content\"";
+				DEVELOPMENT_TEAM = J4UJD4Z33J;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Bolera/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Bolera;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.giantmushroom.bolera;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E0000007000000000000E007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "Bolera-mac/Bolera-mac.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J4UJD4Z33J;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Bolera-mac/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.giantmushroom.bolera.mac;
+				PRODUCT_NAME = Bolera;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		E0000008000000000000E008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "Bolera-mac/Bolera-mac.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J4UJD4Z33J;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Bolera-mac/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.giantmushroom.bolera.mac;
+				PRODUCT_NAME = Bolera;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E0000000000000000000E000 /* Build configuration list for PBXProject "Bolera" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E0000001000000000000E001 /* Debug */,
+				E0000002000000000000E002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E0000003000000000000E003 /* Build configuration list for PBXNativeTarget "Bolera" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E0000004000000000000E004 /* Debug */,
+				E0000005000000000000E005 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E0000006000000000000E006 /* Build configuration list for PBXNativeTarget "Bolera-mac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E0000007000000000000E007 /* Debug */,
+				E0000008000000000000E008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		G0000001000000000000G001 /* XCLocalSwiftPackageReference "BoleraCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = BoleraCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		H0000001000000000000H001 /* BoleraCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BoleraCore;
+		};
+		H0000002000000000000H002 /* BoleraCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BoleraCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = F0000000000000000000F000 /* Project object */;
+}

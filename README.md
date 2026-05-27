@@ -52,16 +52,21 @@ xcodebuild -project Bolera.xcodeproj \
 
 Last.fm powers the similar-artists rail on the artist detail page, full artist bios, the smarter daily-mix grouping, and optional scrobbling.
 
-To enable it, register an app at [last.fm/api/account/create](https://www.last.fm/api/account/create) and paste the API key and shared secret into `BoleraCore/Sources/BoleraCore/Services/LastFmService.swift`:
+To enable it:
 
-```swift
-public static let appAPIKey    = "YOUR_BOLERA_LASTFM_API_KEY"
-public static let appAPISecret = "YOUR_BOLERA_LASTFM_SHARED_SECRET"
-```
+1. Register an app at [last.fm/api/account/create](https://www.last.fm/api/account/create).
+2. Copy the template into a local-only secrets file:
 
-Once those are filled in, users sign in to Last.fm with just their last.fm username and password — no per-user API keys required.
+   ```bash
+   cp BoleraCore/Sources/BoleraCore/Services/LastFmSecrets.swift.example \
+      BoleraCore/Sources/BoleraCore/Services/LastFmSecrets.swift
+   ```
 
-If both fields are left as the `YOUR_…` placeholders, all Last.fm features simply turn themselves off.
+3. Paste your API Key + Shared Secret into the new file. It's gitignored so credentials stay on your machine.
+
+Once filled in, users sign in to Last.fm with just their last.fm username and password — no per-user API keys required.
+
+If both values remain as `YOUR_…` placeholders, all Last.fm features (Similar Artists, bios, smarter daily mixes, scrobbling, mood mixes) simply turn themselves off at runtime.
 
 ## Pro
 

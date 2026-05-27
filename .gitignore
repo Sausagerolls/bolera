@@ -52,3 +52,6 @@ marketing/.cache/
 secrets.json
 .env
 .env.local
+
+# Last.fm app credentials — see LastFmSecrets.swift.example for setup
+BoleraCore/Sources/BoleraCore/Services/LastFmSecrets.swift

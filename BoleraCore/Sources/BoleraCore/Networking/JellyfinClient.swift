@@ -398,6 +398,24 @@ public struct JellyfinClient {
         _ = try await sendVoid(req)
     }
 
+    /// Fetch audio tracks tagged with the given genre. Used by mood-based
+    /// mix generation — caller typically requests a handful of genres and
+    /// combines / dedupes the results.
+    public func audioByGenre(_ genre: String, limit: Int = 60) async throws -> [BaseItem] {
+        let q: [URLQueryItem] = [
+            URLQueryItem(name: "IncludeItemTypes", value: "Audio"),
+            URLQueryItem(name: "Genres", value: genre),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "SortBy", value: "Random"),
+            URLQueryItem(name: "Limit", value: String(limit)),
+            URLQueryItem(name: "UserId", value: userId),
+            URLQueryItem(name: "Fields", value: "Genres")
+        ]
+        let req = try request("Users/\(userId)/Items", query: q)
+        let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
+        return res.Items.filter { $0.type == "Audio" }
+    }
+
     /// Delete an item from the user's library. Jellyfin removes the item
     /// metadata server-side; for playlists this removes the playlist itself.
     public func deleteItem(_ itemId: String) async throws {

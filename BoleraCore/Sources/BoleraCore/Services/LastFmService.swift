@@ -18,8 +18,8 @@ public final class LastFmService: ObservableObject {
     /// registering at https://www.last.fm/api/account/create — all users then
     /// sign in with just their Last.fm username + password.
     /// Embedding the secret is standard practice for media-player clients.
-    public static let appAPIKey    = "YOUR_BOLERA_LASTFM_API_KEY"
-    public static let appAPISecret = "YOUR_BOLERA_LASTFM_SHARED_SECRET"
+    public static let appAPIKey    = LastFmSecrets.apiKey
+    public static let appAPISecret = LastFmSecrets.apiSecret
 
     /// User-supplied override (advanced). Defaults to empty; when empty,
     /// `effectiveAPIKey`/`effectiveAPISecret` fall back to the baked-in app
@@ -160,6 +160,44 @@ public final class LastFmService: ObservableObject {
         }
         let wrapped = try JSONDecoder().decode(Wrapper.self, from: data)
         return wrapped.similarartists.artist
+    }
+
+    // MARK: - Top artists for a tag (tag.getTopArtists)
+
+    public struct TagArtist: Codable, Hashable, Identifiable, Sendable {
+        public let name: String
+        public let mbid: String?
+        public var id: String { mbid?.isEmpty == false ? mbid! : name }
+    }
+
+    /// Returns the most popular artists on Last.fm for a given tag.
+    /// Read-only; only needs an API key. Useful for mood-based mixes —
+    /// "chill" or "synthwave" → curated artist list that we can intersect
+    /// with the user's Jellyfin library.
+    public func topArtists(forTag tag: String, limit: Int = 30) async throws -> [TagArtist] {
+        guard hasAppCredentials else {
+            throw LastFmError.message("Last.fm not configured")
+        }
+        var comps = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "method", value: "tag.gettopartists"),
+            URLQueryItem(name: "tag", value: tag),
+            URLQueryItem(name: "api_key", value: effectiveAPIKey),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "format", value: "json")
+        ]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "GET"
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw LastFmError.message("Last.fm HTTP error")
+        }
+        struct Wrapper: Decodable {
+            struct Top: Decodable { let artist: [TagArtist] }
+            let topartists: Top
+        }
+        let wrapped = try JSONDecoder().decode(Wrapper.self, from: data)
+        return wrapped.topartists.artist
     }
 
     // MARK: - Top tracks (artist.getTopTracks)

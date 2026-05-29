@@ -816,18 +816,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
             self?.seek(to: e.positionTime)
             return .success
         }
-        center.skipForwardCommand.preferredIntervals = [15]
-        center.skipBackwardCommand.preferredIntervals = [15]
-        center.skipForwardCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            self.seek(to: min(self.currentTime + 15, self.duration))
-            return .success
-        }
-        center.skipBackwardCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            self.seek(to: max(self.currentTime - 15, 0))
-            return .success
-        }
+        // Show previous/next TRACK buttons in CarPlay Now Playing, not the
+        // ±15s seconds-skip buttons. When the skip-interval commands are
+        // enabled CarPlay renders those instead of track skip, so disable them.
+        center.skipForwardCommand.isEnabled = false
+        center.skipBackwardCommand.isEnabled = false
+        center.nextTrackCommand.isEnabled = true
+        center.previousTrackCommand.isEnabled = true
     }
 
     private func updateNowPlaying() {

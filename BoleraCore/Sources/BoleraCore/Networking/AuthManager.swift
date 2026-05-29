@@ -90,6 +90,14 @@ public final class AuthManager: ObservableObject {
         Keychain.delete("userId")
         Keychain.delete("userName")
         wipeServerScopedCaches()
+        // A full sign-out should clear linked accounts too, not just the
+        // Jellyfin session — drop the Last.fm session.
+        Task { @MainActor in LastFmService.shared.signOut() }
+        // The library cache + artwork were just wiped, so the next login should
+        // re-run the prefetch onboarding (and re-show the "Preparing your
+        // library" screen). Clear the flags it gates on.
+        UserDefaults.standard.removeObject(forKey: "bolera.onboarding.prefetchDone")
+        UserDefaults.standard.removeObject(forKey: "bolera.prefetch.lastCompleted")
         NotificationCenter.default.post(name: Notification.Name("boleraDidLogout"), object: nil)
         self.serverURL = nil
         self.accessToken = nil

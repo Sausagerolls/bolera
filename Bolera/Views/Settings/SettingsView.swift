@@ -4,6 +4,7 @@ import BoleraCore
 struct SettingsView: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var pro: ProEntitlementStore
+    @ObservedObject private var prefetcher = LibraryPrefetcher.shared
     @AppStorage("bolera.maxBitrate") private var maxBitrate: Int = 320
     @State private var cacheSizeText: String = "—"
     @State private var clearingCache = false
@@ -51,6 +52,21 @@ struct SettingsView: View {
                     DownloadsView()
                 } label: {
                     Label("Downloads", systemImage: "arrow.down.circle")
+                }
+                if prefetcher.isRunning {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(prefetcher.phase.isEmpty ? "Updating…" : prefetcher.phase,
+                              systemImage: "arrow.triangle.2.circlepath")
+                        ProgressView(value: prefetcher.progress).tint(.accentColor)
+                    }
+                } else {
+                    Button {
+                        guard let url = auth.serverURL else { return }
+                        Task { await prefetcher.run(client: JellyfinClient(baseURL: url, auth: auth), auth: auth) }
+                    } label: {
+                        Label("Update Offline Cache", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(auth.serverURL == nil)
                 }
                 LabeledContent("Cache Size", value: cacheSizeText)
                 Button(role: .destructive) {

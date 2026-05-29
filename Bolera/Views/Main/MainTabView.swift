@@ -4,6 +4,7 @@ import BoleraCore
 struct MainTabView: View {
     @EnvironmentObject var auth: AuthManager
     @State private var showNowPlaying = false
+    @ObservedObject private var connectivity = ConnectivityStore.shared
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -43,6 +44,13 @@ struct MainTabView: View {
             // entire TabView body on every tick (caused scroll jitter).
             MiniPlayerOverlay(showNowPlaying: $showNowPlaying)
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !connectivity.isOnline {
+                OfflineBanner()
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: connectivity.isOnline)
         .onAppear {
             AudioPlayer.shared.authManager = auth
         }
@@ -93,5 +101,22 @@ private struct MiniPlayerScrollInset: ViewModifier {
         content
             .contentMargins(.bottom, inset, for: .scrollContent)
             .contentMargins(.bottom, inset, for: .scrollIndicators)
+    }
+}
+
+/// App-wide offline notice, hosted as a top safe-area inset in MainTabView.
+private struct OfflineBanner: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wifi.slash")
+            Text("Offline — reconnect to your server")
+                .lineLimit(1)
+            Spacer()
+        }
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.85))
     }
 }

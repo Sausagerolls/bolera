@@ -39,12 +39,20 @@ public struct JellyfinClient {
     }
 
     private func send<T: Decodable>(_ req: URLRequest, as type: T.Type) async throws -> T {
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: req)
+        } catch {
+            await ConnectivityStore.shared.noteFailure(error)
+            throw error
+        }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         guard (200..<300).contains(http.statusCode) else {
             print("[JellyfinClient] HTTP \(http.statusCode) for \(req.url?.absoluteString ?? "?")")
             throw APIError.badResponse(http.statusCode)
         }
+        await ConnectivityStore.shared.noteSuccess()
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
@@ -68,16 +76,25 @@ public struct JellyfinClient {
         let url = baseURL.appendingPathComponent("Users/AuthenticateByName")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.timeoutInterval = 15   // fail fast (default 60s) so offline login surfaces quickly
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue(auth.authHeader(), forHTTPHeaderField: "Authorization")
         req.httpBody = try JSONEncoder().encode(AuthRequest(Username: username, Pw: password))
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: req)
+        } catch {
+            await ConnectivityStore.shared.noteFailure(error)
+            throw error
+        }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw APIError.message("Invalid username or password.") }
             throw APIError.badResponse(http.statusCode)
         }
+        await ConnectivityStore.shared.noteSuccess()
         return try JSONDecoder().decode(AuthResponse.self, from: data)
     }
 
@@ -302,6 +319,21 @@ public struct JellyfinClient {
         let req = try request("Users/\(userId)/Items", query: q)
         let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
         return res.Items
+    }
+
+    /// Flat (capped) list of every audio track in the library — used by the
+    /// onboarding prefetch to cache track names for fast/offline browsing.
+    public func allTracks(limit: Int = 10000) async throws -> [BaseItem] {
+        let q: [URLQueryItem] = [
+            URLQueryItem(name: "IncludeItemTypes", value: "Audio"),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "SortBy", value: "SortName"),
+            URLQueryItem(name: "Limit", value: String(limit)),
+            URLQueryItem(name: "Fields", value: "ImageTags")
+        ]
+        let req = try request("Users/\(userId)/Items", query: q)
+        let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
+        return res.Items.filter { $0.type == "Audio" }
     }
 
     public func playlistItems(_ playlistId: String) async throws -> [BaseItem] {

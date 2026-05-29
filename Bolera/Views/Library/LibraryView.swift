@@ -4,6 +4,7 @@ import BoleraCore
 struct LibraryView: View {
     enum Tab: String, CaseIterable { case artists = "Artists", albums = "Albums", playlists = "Playlists", downloaded = "Downloaded" }
     @State private var tab: Tab = .artists
+    @EnvironmentObject var connectivity: ConnectivityStore
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,7 +16,10 @@ struct LibraryView: View {
             .padding(.top, 8)
 
             Group {
-                switch tab {
+                // Offline: force the Downloaded view regardless of the selected
+                // segment (keeping the switch as the single structural branch so
+                // the view tree shape stays stable and nav doesn't reset).
+                switch (connectivity.isOnline ? tab : .downloaded) {
                 case .artists: ArtistsView()
                 case .albums: AlbumsView()
                 case .playlists: PlaylistsView()
@@ -26,6 +30,12 @@ struct LibraryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(BoleraBackground())
         .navigationTitle("Library")
+        .onChange(of: connectivity.isOnline) { _, online in
+            if !online { tab = .downloaded }
+        }
+        .onAppear {
+            if !connectivity.isOnline { tab = .downloaded }
+        }
     }
 
     /// Maps an item name to the single character used in the alphabet

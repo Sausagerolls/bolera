@@ -105,6 +105,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
                                                selector: #selector(handleInterruption),
                                                name: AVAudioSession.interruptionNotification,
                                                object: nil)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(handleRouteChange),
+                                               name: AVAudioSession.routeChangeNotification,
+                                               object: nil)
         #endif
     }
 
@@ -358,10 +362,16 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // Tear down the old active processor (the inactive one we leave alone — it
         // belongs to the previous track and will get replaced on crossfade swap).
         if activeIsA {
-            if let old = processorA { Task { @MainActor in EQManager.shared.unregister(old) } }
+            if let old = processorA {
+                detachMix(from: playerA)   // finalize the old tap before dropping our ref
+                Task { @MainActor in EQManager.shared.unregister(old) }
+            }
             processorA = processor
         } else {
-            if let old = processorB { Task { @MainActor in EQManager.shared.unregister(old) } }
+            if let old = processorB {
+                detachMix(from: playerB)
+                Task { @MainActor in EQManager.shared.unregister(old) }
+            }
             processorB = processor
         }
 
@@ -491,10 +501,23 @@ public final class AudioPlayer: NSObject, ObservableObject {
     }
 
     private func unregisterProcessors() {
+        detachMix(from: playerA)
+        detachMix(from: playerB)
         if let p = processorA { Task { @MainActor in EQManager.shared.unregister(p) } }
         if let p = processorB { Task { @MainActor in EQManager.shared.unregister(p) } }
         processorA = nil
         processorB = nil
+    }
+
+    /// Detach the tap-bearing audioMix from the item on `player` BEFORE we drop
+    /// our Swift reference to the AudioProcessor that owns the tap. Clearing the
+    /// mix makes AVFoundation finalize the tap (firing tapFinalizeCallback ->
+    /// release) rather than leaving the audio render thread calling process() on
+    /// a soon-to-be-freed processor — the rapid-track-change / crossfade crash.
+    private func detachMix(from player: AVPlayer) {
+        if let item = player.currentItem, item.audioMix != nil {
+            item.audioMix = nil
+        }
     }
 
     // MARK: - Crossfade
@@ -519,6 +542,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
         if MainActor.assumeIsolated({ SleepTimer.shared.willStopAtEndOfTrack }) { return }
         crossfadeStartedFor = cur
 
+        // Re-validate: the queue can shrink (CarPlay/queue edit) between the
+        // bounds check above and here. Reset crossfadeStartedFor so the normal
+        // end-of-track next() still fires instead of the track hanging.
+        guard queue.indices.contains(nextIndex) else {
+            crossfadeStartedFor = nil
+            return
+        }
         let nextItem = queue[nextIndex]
         let url: URL
         if let local = DownloadManager.shared.localFileURL(for: nextItem.Id) {
@@ -571,6 +601,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private func completeCrossfade(to upcoming: BaseItem, nextIndex: Int) {
         crossfadeTimer = nil
         // Swap active/inactive roles.
+        detachMix(from: activePlayer)   // finalize the outgoing item's tap before releasing it
         activePlayer.pause()
         activePlayer.replaceCurrentItem(with: nil)
         activeIsA.toggle()
@@ -749,6 +780,24 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 if opts.contains(.shouldResume) { play() }
             }
         @unknown default: break
+        }
+    }
+
+    @objc private func handleRouteChange(_ note: Notification) {
+        guard let info = note.userInfo,
+              let reasonRaw = info[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonRaw) else { return }
+        switch reason {
+        case .oldDeviceUnavailable:
+            // Output device (CarPlay / Bluetooth / headphones) went away —
+            // pause rather than blast audio out the phone speaker. Quiescing
+            // the render thread here also narrows the tap-teardown window.
+            pause()
+        default:
+            // .newDeviceAvailable / .categoryChange / .override /
+            // .routeConfigurationChange — keep playing; the engine reconfigures
+            // for the new route itself.
+            break
         }
     }
     #endif

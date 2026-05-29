@@ -47,6 +47,9 @@ public final class AuthManager: ObservableObject {
             self.userId = uid
             self.userName = Keychain.get("userName")
             self.isAuthenticated = true
+            // We just read successfully (device unlocked at least once), so
+            // upgrade any legacy items to AfterFirstUnlock in place.
+            Keychain.migrateAccessibilityIfNeeded()
         }
     }
 
@@ -130,7 +133,30 @@ enum Keychain {
         SecItemDelete(query as CFDictionary)
         var insert = query
         insert[kSecValueData as String] = data
+        // Readable while the device is locked (after first post-boot unlock) so a
+        // background CarPlay relaunch on a locked phone can restore the session
+        // instead of dumping the user to the login screen.
+        insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         SecItemAdd(insert as CFDictionary, nil)
+    }
+
+    /// One-time upgrade of legacy items written with the default
+    /// kSecAttrAccessibleWhenUnlocked so they survive a locked-phone background
+    /// relaunch. Safe to call repeatedly; a no-op once the flag is set.
+    static func migrateAccessibilityIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: "bolera.keychainAccessibilityMigrated") else { return }
+        for key in ["server", "token", "userId", "userName"] {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: key
+            ]
+            let attrs: [String: Any] = [
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+            ]
+            SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+        }
+        UserDefaults.standard.set(true, forKey: "bolera.keychainAccessibilityMigrated")
     }
 
     static func get(_ key: String) -> String? {

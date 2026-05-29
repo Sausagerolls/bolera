@@ -181,24 +181,28 @@ public final class AudioProcessor: ObservableObject {
     }
 
     fileprivate func process(buffers: UnsafeMutablePointer<AudioBufferList>, frames: CMItemCount) {
-        stateLock.lock()
-        let isEnabled = enabled
-        let isBypass = bypass
-        stateLock.unlock()
-
         let bufList = UnsafeMutableAudioBufferListPointer(buffers)
-        if !isBypass && isEnabled {
+        // Hold stateLock across the whole filter pass so unprepare()/
+        // recomputeCoefficients() can't free or resize the biquad arrays while
+        // the audio render thread is iterating them. The empty-chain guard
+        // protects against a torn-down chain (filters removed by unprepare).
+        stateLock.lock()
+        let canFilter = !bypass && enabled && !biquadL.isEmpty
+        if canFilter {
             if bufList.count >= 1, let ptr = bufList[0].mData?.assumingMemoryBound(to: Float.self) {
                 applyChain(filters: &biquadL, samples: ptr, count: Int(frames))
             }
-            if bufList.count >= 2, let ptr = bufList[1].mData?.assumingMemoryBound(to: Float.self) {
+            if bufList.count >= 2, biquadR.count == biquadL.count,
+               let ptr = bufList[1].mData?.assumingMemoryBound(to: Float.self) {
                 applyChain(filters: &biquadR, samples: ptr, count: Int(frames))
             }
         }
+        stateLock.unlock()
         publishLevels(buffers: bufList, frames: Int(frames))
     }
 
     fileprivate func unprepare() {
+        stateLock.lock(); defer { stateLock.unlock() }
         biquadL.removeAll()
         biquadR.removeAll()
     }

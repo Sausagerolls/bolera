@@ -10,6 +10,8 @@ struct HomeView: View {
     @EnvironmentObject var daily: DailyPlaylistStore
     @EnvironmentObject var lastFm: LastFmService
     @EnvironmentObject var nowPlaying: PlayerNowPlayingState
+    @EnvironmentObject var connectivity: ConnectivityStore
+    @ObservedObject private var downloads = DownloadManager.shared
     @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
     @State private var showMoodMix = false
     @State private var recentsRefresh: Task<Void, Never>?
@@ -17,36 +19,40 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                if let err = library.lastError {
-                    Text("API error: \(err)")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
-                        .background(Color.red.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .padding(.horizontal)
-                }
+                if connectivity.isOnline {
+                    if let err = library.lastError {
+                        Text("API error: \(err)")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .padding(.horizontal)
+                            .padding(.vertical, 8)
+                            .background(Color.red.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .padding(.horizontal)
+                    }
 
-                if moodMixEnabled {
-                    moodMixCard
-                }
+                    if moodMixEnabled {
+                        moodMixCard
+                    }
 
-                if !daily.playlists.isEmpty || daily.isGenerating {
-                    dailySection
-                }
+                    if !daily.playlists.isEmpty || daily.isGenerating {
+                        dailySection
+                    }
 
-                if !library.recentlyPlayed.isEmpty {
-                    section(title: "Recently Played", items: library.recentlyPlayed)
-                }
-                if !library.recentlyAdded.isEmpty {
-                    section(title: "Recently Added", items: library.recentlyAdded)
-                }
-                if !library.frequentAlbums.isEmpty {
-                    section(title: "On Repeat", items: library.frequentAlbums)
-                }
-                if !library.favoriteAlbums.isEmpty {
-                    section(title: "Favorites", items: library.favoriteAlbums)
+                    if !library.recentlyPlayed.isEmpty {
+                        section(title: "Recently Played", items: library.recentlyPlayed)
+                    }
+                    if !library.recentlyAdded.isEmpty {
+                        section(title: "Recently Added", items: library.recentlyAdded)
+                    }
+                    if !library.frequentAlbums.isEmpty {
+                        section(title: "On Repeat", items: library.frequentAlbums)
+                    }
+                    if !library.favoriteAlbums.isEmpty {
+                        section(title: "Favorites", items: library.favoriteAlbums)
+                    }
+                } else {
+                    offlineContent
                 }
                 Color.clear.frame(height: 100)
             }
@@ -62,6 +68,9 @@ struct HomeView: View {
         }
         .refreshable { await reload(force: true) }
         .task { await reload(force: false) }
+        .onReceive(connectivity.didReconnect) { _ in
+            Task { await reload(force: false) }
+        }
         .onChange(of: nowPlaying.current?.Id) { _, _ in
             // Recently Played / On Repeat are server-derived. HomeView's
             // `.task` runs once and the Home tab stays alive in the TabView,
@@ -120,6 +129,27 @@ struct HomeView: View {
             await daily.regenerate(client: client, auth: auth, lastFm: lastFm)
         } else {
             await daily.refreshIfNeeded(client: client, auth: auth, lastFm: lastFm)
+        }
+    }
+
+    /// Downloaded-only content shown when the server is unreachable. Reuses the
+    /// existing `section`/`homeTile` helpers (album/artist tiles navigate;
+    /// Audio tiles play offline).
+    @ViewBuilder
+    private var offlineContent: some View {
+        let artists = downloads.downloadedArtistReps()
+        let albums  = downloads.downloadedAlbumReps()
+        let tracks  = downloads.individuallyDownloadedTracks()
+        if artists.isEmpty && albums.isEmpty && tracks.isEmpty {
+            ContentUnavailableView(
+                "You're Offline",
+                systemImage: "wifi.slash",
+                description: Text("Download music while connected to listen offline."))
+                .frame(minHeight: 300)
+        } else {
+            if !albums.isEmpty  { section(title: "Downloaded Albums",  items: albums) }
+            if !artists.isEmpty { section(title: "Downloaded Artists", items: artists) }
+            if !tracks.isEmpty  { section(title: "Downloaded Tracks",  items: tracks) }
         }
     }
 

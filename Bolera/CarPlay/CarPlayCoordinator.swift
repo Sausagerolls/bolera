@@ -1,5 +1,6 @@
 import UIKit
 import CarPlay
+import Combine
 import BoleraCore
 
 /// Owns Bolera's CarPlay template hierarchy.
@@ -26,6 +27,7 @@ import BoleraCore
 final class CarPlayCoordinator {
 
     private let interfaceController: CPInterfaceController
+    private var cancellables = Set<AnyCancellable>()
 
     init(interfaceController: CPInterfaceController) {
         self.interfaceController = interfaceController
@@ -35,6 +37,35 @@ final class CarPlayCoordinator {
         interfaceController.setRootTemplate(buildRootTabBar(), animated: false, completion: nil)
         Task { await loadRecents() }
         Task { await refreshDailyMixesIfNeeded(); await loadPlaylists() }
+        // Reload the server-backed tabs whenever connectivity flips, so CarPlay
+        // shows downloaded content offline and repopulates from the server on
+        // reconnect. (Library Albums/Artists are loaded on tap, so they read
+        // live connectivity then.)
+        ConnectivityStore.shared.$isOnline
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    await self?.loadRecents()
+                    await self?.loadPlaylists()
+                }
+            }
+            .store(in: &cancellables)
+        // Sign-out must hide ALL content (including downloaded items) — pop any
+        // pushed downloaded list and reload the tabs into the sign-in prompt.
+        AuthManager.shared.$isAuthenticated
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.interfaceController.popToRootTemplate(animated: false, completion: nil)
+                    await self?.loadRecents()
+                    await self?.loadPlaylists()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     /// CarPlay can connect before the user opens the phone app, in
@@ -88,7 +119,13 @@ final class CarPlayCoordinator {
                                    image: UIImage(systemName: "square.stack"))
         albumsRow.handler = { [weak self] _, completion in
             Task { @MainActor in
-                await self?.pushAllAlbums()
+                // Downloaded fallback only when signed IN but offline. Signed
+                // out → the server loader, which shows the sign-in prompt.
+                if ConnectivityStore.shared.isOnline || !AuthManager.shared.isAuthenticated {
+                    await self?.pushAllAlbums()
+                } else {
+                    await self?.pushDownloadedAlbums()
+                }
                 completion()
             }
         }
@@ -97,7 +134,11 @@ final class CarPlayCoordinator {
                                     image: UIImage(systemName: "person.circle"))
         artistsRow.handler = { [weak self] _, completion in
             Task { @MainActor in
-                await self?.pushAllArtists()
+                if ConnectivityStore.shared.isOnline || !AuthManager.shared.isAuthenticated {
+                    await self?.pushAllArtists()
+                } else {
+                    await self?.pushDownloadedArtists()
+                }
                 completion()
             }
         }
@@ -141,6 +182,14 @@ final class CarPlayCoordinator {
     }
 
     private func loadRecents() async {
+        guard AuthManager.shared.isAuthenticated else {
+            recentsTemplate.updateSections([signInPromptSection()])
+            return
+        }
+        if !ConnectivityStore.shared.isOnline {
+            recentsTemplate.updateSections(downloadedRecentsSections())
+            return
+        }
         guard let client = client else {
             recentsTemplate.updateSections([signInPromptSection()])
             return
@@ -165,6 +214,32 @@ final class CarPlayCoordinator {
     }
 
     private func loadPlaylists() async {
+        guard AuthManager.shared.isAuthenticated else {
+            playlistsTemplate.updateSections([signInPromptSection()])
+            return
+        }
+        if !ConnectivityStore.shared.isOnline {
+            let pls = DownloadManager.shared.downloadedPlaylistList()
+            guard !pls.isEmpty else {
+                playlistsTemplate.updateSections([emptySection("Offline — no downloaded playlists.")])
+                return
+            }
+            let rows: [CPListItem] = pls.map { pl in
+                let tracks = DownloadManager.shared.downloadedTracks(forPlaylist: pl.id)
+                let row = CPListItem(text: pl.name,
+                                     detailText: "\(tracks.count) track\(tracks.count == 1 ? "" : "s")",
+                                     image: placeholderImage)
+                row.handler = { [weak self] _, completion in
+                    Task { @MainActor in
+                        await self?.pushDownloadedPlaylistDetail(id: pl.id, title: pl.name)
+                        completion()
+                    }
+                }
+                return row
+            }
+            playlistsTemplate.updateSections([CPListSection(items: rows, header: "Downloaded", sectionIndexTitle: nil)])
+            return
+        }
         var sections: [CPListSection] = []
 
         // Daily Mixes (always first if any exist)
@@ -462,6 +537,12 @@ final class CarPlayCoordinator {
     ]
 
     private func runMoodMix(prompt: String) async {
+        guard ConnectivityStore.shared.isOnline else {
+            let t = CPListTemplate(title: prompt,
+                                   sections: [emptySection("Offline — Make a Mix needs a connection to your server.")])
+            interfaceController.pushTemplate(t, animated: true, completion: nil)
+            return
+        }
         // Show a transient "Generating…" template so the head unit
         // doesn't look frozen while Apple Intelligence works.
         let progress = CPListTemplate(title: prompt,
@@ -503,12 +584,38 @@ final class CarPlayCoordinator {
 
     // MARK: - Downloaded Music
 
+    /// Offline Recents: surface downloaded albums + individually-downloaded
+    /// tracks so there's something playable in the car without a connection.
+    private func downloadedRecentsSections() -> [CPListSection] {
+        let dm = DownloadManager.shared
+        let albums = dm.downloadedAlbumReps()
+        let tracks = dm.individuallyDownloadedTracks()
+        guard !albums.isEmpty || !tracks.isEmpty else {
+            return [emptySection("Offline — no downloads on this device yet.")]
+        }
+        var sections: [CPListSection] = []
+        if !albums.isEmpty {
+            let rows = albums.map { makeDownloadedAlbumRow($0) }
+            sections.append(CPListSection(items: rows, header: "Downloaded Albums", sectionIndexTitle: nil))
+            loadArtwork(for: albums, into: rows)
+        }
+        if !tracks.isEmpty {
+            sections.append(CPListSection(items: trackRows(for: tracks, image: placeholderImage),
+                                          header: "Downloaded Tracks", sectionIndexTitle: nil))
+        }
+        return sections
+    }
+
     private func pushDownloadedMusic() async {
         let template = CPListTemplate(title: "Downloaded Music",
                                       sections: [CPListSection(items: [loadingRow()],
                                                                header: nil, sectionIndexTitle: nil)])
         interfaceController.pushTemplate(template, animated: true, completion: nil)
 
+        guard AuthManager.shared.isAuthenticated else {
+            template.updateSections([signInPromptSection()])
+            return
+        }
         let dm = DownloadManager.shared
         let artistCount = dm.downloadedArtistReps().count
         let albumCount = dm.downloadedAlbumReps().count

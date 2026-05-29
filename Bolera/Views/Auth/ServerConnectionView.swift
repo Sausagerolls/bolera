@@ -8,6 +8,7 @@ struct ServerConnectionView: View {
     @State private var password: String = ""
     @State private var loading = false
     @State private var error: String?
+    @State private var signInTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -48,23 +49,39 @@ struct ServerConnectionView: View {
                             .padding(.horizontal)
                     }
 
-                    Button(action: signIn) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.accentColor)
-                                .frame(height: 50)
-                            if loading {
-                                ProgressView().tint(.white)
-                            } else {
-                                Text("Sign In")
+                    HStack(spacing: 12) {
+                        Button(action: signIn) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.accentColor)
+                                    .frame(height: 50)
+                                if loading {
+                                    ProgressView().tint(.white)
+                                } else {
+                                    Text("Sign In")
+                                        .font(.headline)
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                        }
+                        .disabled(loading || !canSubmit)
+                        .opacity(canSubmit ? 1 : 0.5)
+
+                        if loading {
+                            Button(action: cancelSignIn) {
+                                Text("Cancel")
                                     .font(.headline)
                                     .foregroundStyle(.white)
+                                    .frame(maxWidth: 110)
+                                    .frame(height: 50)
+                                    .background(Color.red.opacity(0.65),
+                                                in: RoundedRectangle(cornerRadius: 12))
                             }
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
                         }
                     }
                     .padding(.horizontal)
-                    .disabled(loading || !canSubmit)
-                    .opacity(canSubmit ? 1 : 0.5)
+                    .animation(.easeInOut(duration: 0.2), value: loading)
 
                     Spacer()
                 }
@@ -96,14 +113,28 @@ struct ServerConnectionView: View {
         }
         loading = true
         error = nil
-        Task {
+        signInTask = Task {
             do {
                 try await auth.login(server: url, username: username, password: password)
+            } catch is CancellationError {
+                // user cancelled — message set by cancelSignIn()
+            } catch let u as URLError where u.code == .cancelled {
+                // URLSession surfaced the cancel
             } catch {
                 await MainActor.run { self.error = error.localizedDescription }
             }
-            await MainActor.run { self.loading = false }
+            await MainActor.run {
+                self.loading = false
+                self.signInTask = nil
+            }
         }
+    }
+
+    private func cancelSignIn() {
+        signInTask?.cancel()   // propagates to the in-flight URLSession request
+        signInTask = nil
+        loading = false
+        error = "Sign in cancelled."
     }
 }
 

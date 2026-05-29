@@ -86,12 +86,25 @@ public final class AuthManager: ObservableObject {
         Keychain.delete("token")
         Keychain.delete("userId")
         Keychain.delete("userName")
+        wipeServerScopedCaches()
         NotificationCenter.default.post(name: Notification.Name("boleraDidLogout"), object: nil)
         self.serverURL = nil
         self.accessToken = nil
         self.userId = nil
         self.userName = nil
         self.isAuthenticated = false
+    }
+
+    /// Removes disk caches that are scoped to a specific Jellyfin server —
+    /// item lookups, downloaded artwork, library snapshots. Pro state and
+    /// Last.fm credentials are intentionally preserved (they belong to the
+    /// user, not the server).
+    private func wipeServerScopedCaches() {
+        let fm = FileManager.default
+        let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        for sub in ["ImageCache", "LibraryCache", "DailyArtwork"] {
+            try? fm.removeItem(at: caches.appendingPathComponent(sub))
+        }
     }
 }
 

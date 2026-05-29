@@ -35,11 +35,16 @@ private struct HomeContent_Mac: View {
     @EnvironmentObject var library: LibraryStore
     @EnvironmentObject var daily: DailyPlaylistStore
     @EnvironmentObject var lastFm: LastFmService
+    @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
+    @State private var showMoodMix = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                if !daily.playlists.isEmpty {
+                if moodMixEnabled {
+                    moodMixCard
+                }
+                if !daily.playlists.isEmpty || daily.isGenerating {
                     dailySection
                 }
                 if !library.recentlyPlayed.isEmpty {
@@ -63,19 +68,86 @@ private struct HomeContent_Mac: View {
             await library.refresh(client: client)
             await daily.refreshIfNeeded(client: client, auth: auth, lastFm: lastFm)
         }
+        .sheet(isPresented: $showMoodMix) {
+            MoodMixSheet_Mac()
+        }
+    }
+
+    /// Gradient banner that mirrors the iOS Make-a-Mix card.
+    private var moodMixCard: some View {
+        Button {
+            showMoodMix = true
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "wand.and.stars")
+                    .font(.title2)
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(.white.opacity(0.18), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Make a Mix").font(.headline).foregroundStyle(.white)
+                    Text("Describe a mood, get a playlist")
+                        .font(.caption).foregroundStyle(.white.opacity(0.85))
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            .padding(16)
+            .background(
+                LinearGradient(colors: [Color.accentColor, Color.purple, Color.indigo],
+                               startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: 14)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var dailySection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Daily Mixes").font(.title3).bold()
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(daily.playlists) { playlist in
-                        DailyPlaylistTile_Mac(playlist: playlist)
+            HStack(spacing: 8) {
+                Text("Daily Mixes").font(.title3).bold()
+                if daily.isGenerating {
+                    ProgressView().controlSize(.small)
+                    Text("Generating…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    Task { await regenerateMixes() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.subheadline)
+                        .padding(6)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .rotationEffect(.degrees(daily.isGenerating ? 360 : 0))
+                        .animation(daily.isGenerating
+                                   ? .linear(duration: 1.2).repeatForever(autoreverses: false)
+                                   : .default,
+                                   value: daily.isGenerating)
+                }
+                .buttonStyle(.plain)
+                .disabled(daily.isGenerating)
+                .help("Regenerate Daily Mixes")
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+            }
+            if !daily.playlists.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(daily.playlists) { playlist in
+                            DailyPlaylistTile_Mac(playlist: playlist)
+                        }
                     }
                 }
             }
         }
+    }
+
+    private func regenerateMixes() async {
+        guard let url = auth.serverURL else { return }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        await daily.regenerate(client: client, auth: auth, lastFm: lastFm)
     }
 
     private func section(_ title: String, items: [BaseItem]) -> some View {
@@ -122,6 +194,40 @@ struct DailyPlaylistTile_Mac: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Shimmer loading placeholder
+
+/// Faint gradient stripe that sweeps across a muted background while
+/// artwork is loading. Used in place of the static gray rectangle so the
+/// user can tell the difference between "loading" and "image broken".
+struct ShimmerView_Mac: View {
+    var cornerRadius: CGFloat = 8
+    @State private var phase: CGFloat = -1
+
+    var body: some View {
+        GeometryReader { _ in
+            ZStack {
+                Color.white.opacity(0.06)
+                LinearGradient(
+                    stops: [
+                        .init(color: .white.opacity(0),    location: 0.0),
+                        .init(color: .white.opacity(0.18), location: 0.5),
+                        .init(color: .white.opacity(0),    location: 1.0)
+                    ],
+                    startPoint: UnitPoint(x: phase, y: 0.5),
+                    endPoint:   UnitPoint(x: phase + 0.6, y: 0.5)
+                )
+                .blendMode(.plusLighter)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        }
+        .onAppear {
+            withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
+                phase = 1.4
+            }
+        }
     }
 }
 
@@ -221,7 +327,9 @@ struct ArtistTile_Mac: View {
     @EnvironmentObject var pinned: PinnedItemsStore
     @EnvironmentObject var nav: MacNavCoordinator
     @EnvironmentObject var lastFm: LastFmService
+    @EnvironmentObject var ignored: IgnoredTracksStore
     @State private var image: PlatformImage?
+    @State private var loadFailed = false
 
     var body: some View {
         Button {
@@ -229,13 +337,15 @@ struct ArtistTile_Mac: View {
         } label: {
             VStack(alignment: .center, spacing: 6) {
                 ZStack {
-                    Color.gray.opacity(0.15)
                     if let image {
                         Image(nsImage: image).resizable().scaledToFill()
-                    } else {
+                    } else if loadFailed {
+                        Color.white.opacity(0.06)
                         Image(systemName: "music.mic")
                             .font(.system(size: 38))
                             .foregroundStyle(.secondary)
+                    } else {
+                        ShimmerView_Mac(cornerRadius: 80)
                     }
                 }
                 .frame(width: 160, height: 160)
@@ -255,6 +365,17 @@ struct ArtistTile_Mac: View {
                 Label(pinned.isPinned(itemId: item.Id) ? "Unpin from Sidebar" : "Pin to Sidebar",
                       systemImage: pinned.isPinned(itemId: item.Id) ? "pin.slash" : "pin")
             }
+            Divider()
+            Button {
+                if ignored.isArtistIgnored(item.Id) {
+                    ignored.unignoreArtist(item.Id)
+                } else {
+                    ignored.ignoreArtist(item)
+                }
+            } label: {
+                Label(ignored.isArtistIgnored(item.Id) ? "Stop Ignoring Artist" : "Ignore Artist",
+                      systemImage: ignored.isArtistIgnored(item.Id) ? "eye" : "eye.slash")
+            }
         }
         .task(id: item.Id) { await loadImage() }
         .onAppear {
@@ -265,10 +386,15 @@ struct ArtistTile_Mac: View {
     private func loadImage() async {
         guard image == nil, let url = auth.serverURL else { return }
         let client = JellyfinClient(baseURL: url, auth: auth)
-        let imgURL = client.imageURL(for: item.Id, tag: item.ImageTags?["Primary"], maxWidth: 320)
-        guard let imgURL else { return }
+        guard let imgURL = client.imageURL(for: item.Id, tag: item.ImageTags?["Primary"], maxWidth: 320) else {
+            await MainActor.run { self.loadFailed = true }
+            return
+        }
         let img = await ImageCache.shared.load(url: imgURL, headers: ["Authorization": auth.authHeader()])
-        await MainActor.run { self.image = img }
+        await MainActor.run {
+            self.image = img
+            self.loadFailed = (img == nil)
+        }
     }
 }
 
@@ -279,14 +405,22 @@ struct AlbumTile_Mac: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var pinned: PinnedItemsStore
     @EnvironmentObject var nav: MacNavCoordinator
+    @EnvironmentObject var ignored: IgnoredTracksStore
     @State private var image: PlatformImage?
+    @State private var loadFailed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack {
-                Color.gray.opacity(0.15)
                 if let image {
                     Image(nsImage: image).resizable().scaledToFill()
+                } else if loadFailed {
+                    Color.white.opacity(0.06)
+                    Image(systemName: "opticaldisc")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ShimmerView_Mac(cornerRadius: 8)
                 }
             }
             .frame(width: 160, height: 160)
@@ -314,6 +448,19 @@ struct AlbumTile_Mac: View {
                 Label(pinned.isPinned(itemId: item.Id) ? "Unpin from Sidebar" : "Pin to Sidebar",
                       systemImage: pinned.isPinned(itemId: item.Id) ? "pin.slash" : "pin")
             }
+            if item.type == "MusicAlbum" {
+                Divider()
+                Button {
+                    if ignored.isAlbumIgnored(item.Id) {
+                        ignored.unignoreAlbum(item.Id)
+                    } else {
+                        ignored.ignoreAlbum(item)
+                    }
+                } label: {
+                    Label(ignored.isAlbumIgnored(item.Id) ? "Stop Ignoring Album" : "Ignore Album",
+                          systemImage: ignored.isAlbumIgnored(item.Id) ? "eye" : "eye.slash")
+                }
+            }
         }
         .task { await loadImage() }
     }
@@ -331,10 +478,15 @@ struct AlbumTile_Mac: View {
         guard image == nil,
               let url = auth.serverURL else { return }
         let client = JellyfinClient(baseURL: url, auth: auth)
-        let imgURL = client.imageURL(for: item.artworkItemId, tag: item.artworkTag, maxWidth: 320)
-        guard let imgURL else { return }
+        guard let imgURL = client.imageURL(for: item.artworkItemId, tag: item.artworkTag, maxWidth: 320) else {
+            await MainActor.run { self.loadFailed = true }
+            return
+        }
         let img = await ImageCache.shared.load(url: imgURL, headers: ["Authorization": auth.authHeader()])
-        await MainActor.run { self.image = img }
+        await MainActor.run {
+            self.image = img
+            self.loadFailed = (img == nil)
+        }
     }
 
     private func playFromTile() {
@@ -1335,3 +1487,424 @@ private extension Double {
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
+
+// MARK: - AI Mood Mix (Mac)
+//
+// Mirror of the iOS Make-a-Mix sheet. Foundation Models picks tags from a
+// natural-language mood phrase; Last.fm tag → top-artists data + Jellyfin
+// genre search + Last.fm tag.getTopTracks all combine to build a playlist
+// that fits the requested vibe.
+
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
+
+struct MoodMixSheet_Mac: View {
+    @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var player: AudioPlayer
+    @Environment(\.dismiss) var dismiss
+
+    @State private var prompt: String = ""
+    @State private var loading = false
+    @State private var error: String?
+    @State private var tracks: [BaseItem] = []
+    @State private var moodLabel: String = ""
+
+    private let suggestions = [
+        "Late-night drive in the rain",
+        "Sunday morning coffee",
+        "Throwback house party",
+        "Focus & deep work",
+        "Working out, high energy"
+    ]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    inputField
+                    suggestionRow
+                    if !LastFmService.shared.hasAppCredentials || !LastFmService.shared.isAuthenticated {
+                        lastFmHint
+                    }
+                    if let error {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                    if loading {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Asking Apple Intelligence…")
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 20)
+                    }
+                    if !tracks.isEmpty {
+                        resultHeader
+                        resultList
+                    }
+                }
+                .padding(20)
+            }
+        }
+        .frame(width: 540, height: 640)
+    }
+
+    private var header: some View {
+        HStack {
+            Image(systemName: "wand.and.stars")
+                .font(.title3)
+                .foregroundStyle(.tint)
+            Text("Make a Mix").font(.headline)
+            Spacer()
+            Button("Done") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.bar)
+    }
+
+    private var inputField: some View {
+        HStack(spacing: 8) {
+            TextField("Describe a vibe, an activity, a memory", text: $prompt)
+                .textFieldStyle(.plain)
+                .font(.title3)
+                .onSubmit { Task { await generate() } }
+            Button {
+                Task { await generate() }
+            } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title)
+                    .foregroundStyle(.tint)
+            }
+            .buttonStyle(.plain)
+            .disabled(prompt.trimmingCharacters(in: .whitespaces).isEmpty || loading)
+        }
+        .padding(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var suggestionRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(suggestions, id: \.self) { s in
+                    Button {
+                        prompt = s
+                        Task { await generate() }
+                    } label: {
+                        Text(s)
+                            .font(.caption)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var lastFmHint: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle.fill")
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Connect Last.fm for much better mixes")
+                    .font(.caption.weight(.semibold))
+                Text("Tag→artist matching gives far richer, more tonally consistent results than genre-only search. Set up in Settings → Last.fm.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var resultHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(moodLabel.isEmpty ? "Your Mix" : moodLabel)
+                    .font(.headline)
+                Text("\(tracks.count) tracks")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                player.play(items: tracks)
+                dismiss()
+            } label: {
+                Label("Play", systemImage: "play.fill")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.top, 10)
+    }
+
+    private var resultList: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(tracks.enumerated()), id: \.element.id) { idx, track in
+                Button {
+                    player.play(items: tracks, startAt: idx)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text("\(idx + 1)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 24, alignment: .trailing)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(track.Name).lineLimit(1)
+                            Text(track.primaryArtistName)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 7)
+                    .padding(.horizontal, 10)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if idx < tracks.count - 1 {
+                    Divider().padding(.leading, 38)
+                }
+            }
+        }
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func generate() async {
+        let p = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !p.isEmpty else { return }
+        loading = true
+        error = nil
+        tracks = []
+        defer { loading = false }
+        await MoodMixGenerator_Mac.shared.generate(
+            prompt: p,
+            auth: auth,
+            onResult: { mood, items in
+                self.moodLabel = mood
+                self.tracks = items
+            },
+            onError: { self.error = $0 }
+        )
+    }
+}
+
+@MainActor
+final class MoodMixGenerator_Mac {
+    static let shared = MoodMixGenerator_Mac()
+
+    func generate(prompt: String,
+                  auth: AuthManager,
+                  onResult: @escaping (_ mood: String, _ tracks: [BaseItem]) -> Void,
+                  onError: @escaping (String) -> Void) async {
+        guard let serverURL = auth.serverURL else {
+            onError("Not signed in to a Jellyfin server"); return
+        }
+        let analysis: MoodAnalysis_Mac
+        do {
+            analysis = try await analyse(prompt: prompt)
+        } catch let e as MoodMixError_Mac {
+            onError(e.message); return
+        } catch {
+            onError(error.localizedDescription); return
+        }
+
+        let client = JellyfinClient(baseURL: serverURL, auth: auth)
+        let lastFm = LastFmService.shared
+        print("[MoodMix-Mac] prompt=\(prompt) → tags=\(analysis.tags) decade=\(analysis.decade) mood=\(analysis.mood)")
+
+        var combined: [BaseItem] = []
+        var seen: Set<String> = []
+
+        if lastFm.hasAppCredentials {
+            let viaLastFm = await buildViaLastFm(analysis: analysis, lastFm: lastFm, client: client, seenTrackIds: &seen)
+            combined.append(contentsOf: viaLastFm)
+            print("[MoodMix-Mac] Last.fm pool: \(viaLastFm.count)")
+        }
+        let viaGenres = await buildViaJellyfinGenres(analysis: analysis, client: client, seenTrackIds: &seen)
+        combined.append(contentsOf: viaGenres)
+        print("[MoodMix-Mac] Jellyfin genre pool: \(viaGenres.count)")
+
+        if lastFm.hasAppCredentials && combined.count < 10 {
+            let viaTracks = await buildViaLastFmTagTracks(analysis: analysis, lastFm: lastFm, client: client, seenTrackIds: &seen)
+            combined.append(contentsOf: viaTracks)
+            print("[MoodMix-Mac] Last.fm tag-tracks pool: \(viaTracks.count)")
+        }
+
+        combined = IgnoredTracksStore.shared.filter(combined)
+
+        if let range = decadeRange(analysis.decade) {
+            let filtered = combined.filter { ($0.ProductionYear).map(range.contains) ?? false }
+            let keepRatio = Double(filtered.count) / Double(max(1, combined.count))
+            if filtered.count >= 15 && keepRatio >= 0.4 { combined = filtered }
+        }
+
+        var perArtist: [String: Int] = [:]
+        let capped = combined.shuffled().filter { t in
+            let key = t.primaryArtistName.lowercased()
+            let c = perArtist[key] ?? 0
+            if c >= 4 { return false }
+            perArtist[key] = c + 1
+            return true
+        }
+        let final = Array(capped.prefix(25))
+        print("[MoodMix-Mac] combined=\(combined.count) → final=\(final.count)")
+        if final.isEmpty {
+            onError("No matching tracks for tags: \(analysis.tags.joined(separator: ", ")). Try a different phrase.")
+        } else {
+            onResult(analysis.mood, final)
+        }
+    }
+
+    private func buildViaLastFm(analysis: MoodAnalysis_Mac, lastFm: LastFmService, client: JellyfinClient, seenTrackIds: inout Set<String>) async -> [BaseItem] {
+        var out: [BaseItem] = []
+        var resolvedIds: Set<String> = []
+        var candidates: [String] = []
+        for tag in analysis.tags.prefix(5) where !tag.isEmpty {
+            let t = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let artists = try? await lastFm.topArtists(forTag: t, limit: 50) {
+                for a in artists where !candidates.contains(where: { $0.compare(a.name, options: .caseInsensitive) == .orderedSame }) {
+                    candidates.append(a.name)
+                }
+            }
+            if candidates.count >= 200 { break }
+        }
+        for name in candidates {
+            if resolvedIds.count >= 30 { break }
+            let hits = (try? await client.artists(search: name)) ?? []
+            let needle = name.folding(options: .diacriticInsensitive, locale: .current)
+            guard let match = hits.first(where: {
+                $0.type == "MusicArtist" &&
+                $0.Name.folding(options: .diacriticInsensitive, locale: .current)
+                    .compare(needle, options: .caseInsensitive) == .orderedSame
+            }) else { continue }
+            guard resolvedIds.insert(match.Id).inserted else { continue }
+            if let tracks = try? await client.topTracksForArtist(match.Id, name: match.Name, limit: 6) {
+                for t in tracks where t.type == "Audio" && seenTrackIds.insert(t.Id).inserted {
+                    out.append(t)
+                }
+            }
+        }
+        return out
+    }
+
+    private func buildViaLastFmTagTracks(analysis: MoodAnalysis_Mac, lastFm: LastFmService, client: JellyfinClient, seenTrackIds: inout Set<String>) async -> [BaseItem] {
+        var candidates: [LastFmService.TagTrack] = []
+        for tag in analysis.tags.prefix(5) where !tag.isEmpty {
+            let t = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let tracks = try? await lastFm.topTracks(forTag: t, limit: 50) {
+                candidates.append(contentsOf: tracks)
+            }
+            if candidates.count >= 150 { break }
+        }
+        var seenKeys: Set<String> = []
+        let unique = candidates.filter { seenKeys.insert($0.id).inserted }
+        var out: [BaseItem] = []
+        var checked = 0
+        for cand in unique.shuffled() {
+            if out.count >= 20 || checked >= 60 { break }
+            checked += 1
+            let hits = (try? await client.searchTracks(cand.name, limit: 6)) ?? []
+            let needle = cand.artist.name.folding(options: .diacriticInsensitive, locale: .current)
+            for hit in hits where hit.type == "Audio" && seenTrackIds.insert(hit.Id).inserted {
+                let am = hit.primaryArtistName.folding(options: .diacriticInsensitive, locale: .current)
+                if am.compare(needle, options: .caseInsensitive) == .orderedSame {
+                    out.append(hit); break
+                }
+            }
+        }
+        return out
+    }
+
+    private func buildViaJellyfinGenres(analysis: MoodAnalysis_Mac, client: JellyfinClient, seenTrackIds: inout Set<String>) async -> [BaseItem] {
+        var out: [BaseItem] = []
+        for tag in analysis.tags.prefix(5) where !tag.isEmpty {
+            let t = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let items = try? await client.audioByGenre(t, limit: 40) {
+                for x in items where seenTrackIds.insert(x.Id).inserted {
+                    out.append(x)
+                }
+            }
+        }
+        return out
+    }
+
+    private func analyse(prompt: String) async throws -> MoodAnalysis_Mac {
+        #if canImport(FoundationModels)
+        if #available(macOS 26, *) {
+            return try await FoundationModelsAdapter_Mac.analyse(prompt: prompt)
+        }
+        #endif
+        throw MoodMixError_Mac.unavailable
+    }
+
+    private func decadeRange(_ s: String) -> ClosedRange<Int>? {
+        let digits = s.filter(\.isNumber)
+        guard let n = Int(digits), n >= 0, n <= 2099 else { return nil }
+        let base: Int
+        if n >= 1900 { base = (n / 10) * 10 }
+        else if n < 30 { base = 2000 + (n / 10) * 10 }
+        else { base = 1900 + (n / 10) * 10 }
+        return base...(base + 9)
+    }
+}
+
+struct MoodAnalysis_Mac {
+    let tags: [String]
+    let decade: String
+    let mood: String
+}
+
+enum MoodMixError_Mac: Error {
+    case unavailable
+    var message: String {
+        switch self {
+        case .unavailable: return "Apple Intelligence isn't available on this Mac or OS version."
+        }
+    }
+}
+
+#if canImport(FoundationModels)
+@available(macOS 26, *)
+enum FoundationModelsAdapter_Mac {
+    @Generable
+    struct Analysis {
+        @Guide(description: "4 to 5 Last.fm tags that fit the mood. MUST include at least 2 specific MUSIC GENRES (e.g. 'indie pop', 'folk', 'soul', 'jazz', 'singer-songwriter', 'acoustic', 'reggae', 'rock', 'hip hop', 'r&b', 'electronic', 'synthwave', 'pop', 'punk', 'country'). Then 1-3 mood/descriptor adjectives (e.g. 'chill', 'melancholic', 'driving', 'upbeat', 'energetic'). Use lowercase. Avoid niche compound tags.")
+        let tags: [String]
+        @Guide(description: "A decade preference matching the mood, like '70s', '80s', '90s', '00s', '10s', '20s'. Leave empty string if none.")
+        let decade: String
+        @Guide(description: "A short 2-4 word playlist name describing the mood, in Title Case.")
+        let mood: String
+    }
+    static func analyse(prompt: String) async throws -> MoodAnalysis_Mac {
+        let model = SystemLanguageModel.default
+        guard model.availability == .available else {
+            throw MoodMixError_Mac.unavailable
+        }
+        let session = LanguageModelSession(
+            instructions: """
+            You translate a user's mood phrase into music metadata for building a playlist.
+            Always respond with the requested structured output.
+            For tags, ALWAYS include at least 2 specific music genres FIRST, then add 1-3 mood/descriptor adjectives.
+            Genre tags are mandatory — without them the playlist cannot be built.
+            Prefer tags real Last.fm users apply to tracks — avoid obscure or compound tags.
+            """
+        )
+        let response = try await session.respond(
+            to: "Mood phrase: \(prompt)",
+            generating: Analysis.self
+        )
+        let a = response.content
+        return MoodAnalysis_Mac(tags: a.tags, decade: a.decade, mood: a.mood)
+    }
+}
+#endif

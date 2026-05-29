@@ -63,6 +63,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private var crossfadeTimer: Timer?
     private var crossfadeStartedFor: BaseItem?
     private var nextPrepared: Bool = false
+
+    /// Pre-loaded AVURLAssets for upcoming queue items, keyed by track Id.
+    /// Kept in memory so a Next press / natural end-of-track can swap to
+    /// the next track instantly without an HTTP open + initial buffer
+    /// stall. We warm the next `preloadDepth` items in the queue.
+    private var preloadedAssets: [String: AVURLAsset] = [:]
+    private let preloadDepth = 3
     /// Set while loadCurrent is preparing a new item but the old item is still
     /// attached to activePlayer. The periodic time observer would otherwise
     /// read the old item's scrubbed position and flicker the progress bar.
@@ -327,14 +334,21 @@ public final class AudioPlayer: NSObject, ObservableObject {
         guard let item = current else { return }
         cancelCrossfade()
 
-        let url: URL
-        if let local = DownloadManager.shared.localFileURL(for: item.Id) {
-            url = local
-        } else if let client = client {
-            url = client.audioStreamURL(for: item.Id)
-        } else { return }
-
-        let asset = AVURLAsset(url: url)
+        // Reuse the warmed asset when possible — saves the HTTP open +
+        // track enumeration round-trip that would otherwise stall the
+        // start of playback by 1–2 seconds.
+        let asset: AVURLAsset
+        if let warmed = consumePreloadedAsset(for: item) {
+            asset = warmed
+        } else {
+            let url: URL
+            if let local = DownloadManager.shared.localFileURL(for: item.Id) {
+                url = local
+            } else if let client = client {
+                url = client.audioStreamURL(for: item.Id)
+            } else { return }
+            asset = AVURLAsset(url: url)
+        }
         let playerItem = AVPlayerItem(asset: asset)
 
         // Install a fresh AudioProcessor + tap for this item.
@@ -370,6 +384,17 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 let d = CMTimeGetSeconds(item.duration)
                 self?.duration = d.isFinite ? d : (self?.duration ?? 0)
                 self?.updateNowPlaying()
+            } else if item.status == .failed {
+                // Surface the failure instead of leaving the UI stuck on
+                // "Playing" with no audio (the most common cause is a
+                // Jellyfin server that's unreachable from the device —
+                // e.g. LAN-only server while phone is on cellular).
+                let reason = item.error?.localizedDescription ?? "unknown"
+                print("[AudioPlayer] AVPlayerItem failed: \(reason). URL: \(item.asset.description)")
+                Task { @MainActor in
+                    self?.isPlaying = false
+                    self?.pendingTrackSwap = false
+                }
             }
         }
         replaceEndObserver(for: playerItem)
@@ -434,6 +459,27 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private func loadArtwork(for item: BaseItem) {
         guard let client = client else { return }
         guard let url = client.imageURL(for: item.artworkItemId, tag: item.artworkTag, maxWidth: 600) else { return }
+        // CarPlay's Now Playing template reads MPNowPlayingInfoCenter
+        // *once* when it appears on the head unit screen — later
+        // updates do refresh in iOS but the first frame the driver sees
+        // is whatever we set right now. If the user just browsed this
+        // album in the Library tab the artwork is already in the
+        // in-memory cache, so use it synchronously to avoid a blank
+        // artwork pane while the async fetch round-trips.
+        //
+        // Try the 600pt URL first (what we'll end up showing), then
+        // fall back to the 240pt URL that CarPlay list cells populated
+        // when the user was browsing — different maxWidth means
+        // different cache key, so the small art is the most likely
+        // synchronous hit on a fresh CarPlay session.
+        if let cached = ImageCache.shared.peekMemory(url: url) {
+            artwork = cached
+            updateNowPlaying()
+        } else if let smallURL = client.imageURL(for: item.artworkItemId, tag: item.artworkTag, maxWidth: 240),
+                  let cached = ImageCache.shared.peekMemory(url: smallURL) {
+            artwork = cached
+            updateNowPlaying()
+        }
         Task {
             if let image = await ImageCache.shared.load(url: url, headers: ["Authorization": authManager?.authHeader() ?? ""]) {
                 await MainActor.run {
@@ -557,14 +603,93 @@ public final class AudioPlayer: NSObject, ObservableObject {
         nextPrepared = false
     }
 
+    // MARK: - Next-track preload
+    //
+    // AVPlayer's first read of a remote AVURLAsset includes the HTTP open,
+    // track enumeration, and initial buffer fill — easily 1–2 seconds of
+    // silence on cellular. We avoid that gap by preparing the next item's
+    // asset in memory once the current track is past a small threshold,
+    // then handing the warmed asset to loadCurrent when the user advances.
+
+    /// Up to `count` upcoming playable (non-ignored) queue indices,
+    /// respecting repeat mode. Used for warming N tracks ahead.
+    private func upcomingPlayableIndices(count: Int) -> [Int] {
+        guard !queue.isEmpty, count > 0 else { return [] }
+        let isIgnored: (BaseItem) -> Bool = { item in
+            MainActor.assumeIsolated { IgnoredTracksStore.shared.isIgnored(item.Id) }
+        }
+        var out: [Int] = []
+        var probe = currentIndex + 1
+        while probe < queue.count, out.count < count {
+            if !isIgnored(queue[probe]) { out.append(probe) }
+            probe += 1
+        }
+        if out.count < count && repeatMode == .all {
+            // Wrap to the front, skipping anything ignored or the current index.
+            for idx in 0..<queue.count {
+                if out.count >= count { break }
+                if idx == currentIndex { continue }
+                if isIgnored(queue[idx]) { continue }
+                out.append(idx)
+            }
+        }
+        return out
+    }
+
+    /// Build (or reuse) warmed URL assets for the next `preloadDepth`
+    /// queue items so Next / end-of-track can swap to a primed asset
+    /// instead of opening the URL from scratch. Trims any cached asset
+    /// for tracks that have fallen outside the upcoming window
+    /// (e.g. user skipped multiple times, queue was rebuilt).
+    private func preloadNextIfNeeded() {
+        guard currentTime >= 3 else { return }
+        let upcoming = upcomingPlayableIndices(count: preloadDepth)
+        let upcomingIds = Set(upcoming.map { queue[$0].Id })
+
+        // Evict warmed assets no longer in the upcoming window.
+        for id in preloadedAssets.keys where !upcomingIds.contains(id) {
+            preloadedAssets.removeValue(forKey: id)
+        }
+        // Warm any upcoming track not already cached.
+        for idx in upcoming {
+            let item = queue[idx]
+            if preloadedAssets[item.Id] != nil { continue }
+            let url: URL
+            if let local = DownloadManager.shared.localFileURL(for: item.Id) {
+                url = local
+            } else if let client = client {
+                url = client.audioStreamURL(for: item.Id)
+            } else { continue }
+            let opts: [String: Any] = [AVURLAssetPreferPreciseDurationAndTimingKey: false]
+            let asset = AVURLAsset(url: url, options: opts)
+            preloadedAssets[item.Id] = asset
+            // Kick off async key load so playable/tracks/duration land
+            // before the user actually advances.
+            asset.loadValuesAsynchronously(forKeys: ["playable", "tracks", "duration"]) { }
+        }
+    }
+
+    /// Hand back the warmed asset for `item` and remove it from the
+    /// cache. loadCurrent uses this so it doesn't have to open the URL
+    /// from scratch.
+    fileprivate func consumePreloadedAsset(for item: BaseItem) -> AVURLAsset? {
+        return preloadedAssets.removeValue(forKey: item.Id)
+    }
+
     // MARK: - Observation
 
     private func addTimeObserver() {
-        timeObserver = playerA.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 10), queue: .main) { [weak self] _ in
+        // 0.5s is plenty for progress bar updates + scrobble/crossfade
+        // bookkeeping; the original 0.1s cadence fired tick() on the
+        // main runloop 20×/sec (10 per player) which competed with
+        // UIKit's scroll handler and caused visible list jitter during
+        // playback.
+        let interval = CMTime(seconds: 0.5, preferredTimescale: 10)
+        timeObserver = playerA.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] _ in
             self?.tick()
         }
         // Second observer on player B so we still get updates after a crossfade swap.
-        _ = playerB.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 10), queue: .main) { [weak self] _ in
+        _ = playerB.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] _ in
             self?.tick()
         }
     }
@@ -590,6 +715,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             }
         }
         maybeStartCrossfade()
+        preloadNextIfNeeded()
         if Date().timeIntervalSince(lastProgressReport) > 10 {
             lastProgressReport = Date()
             reportProgress(event: "timeupdate", paused: !isPlaying)
@@ -660,15 +786,40 @@ public final class AudioPlayer: NSObject, ObservableObject {
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: item.Name,
             MPMediaItemPropertyArtist: item.primaryArtistName,
-            MPMediaItemPropertyAlbumTitle: item.Album ?? "",
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            // Without an explicit media type, CarPlay falls back to a
+            // generic layout where the title can wrap onto a second line
+            // and overlap the artist row. Declaring audio gives us the
+            // music-tuned three-line layout (title / artist / album)
+            // with proper truncation.
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
+        // Only include the album title when it actually has content —
+        // setting an empty string makes CarPlay's Now Playing template
+        // reserve space for it, which causes the artist line to overlap
+        // the title when the layout collapses around a blank album row.
+        if let album = item.Album, !album.isEmpty {
+            info[MPMediaItemPropertyAlbumTitle] = album
+        }
         if let artwork = artwork {
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: artwork.size) { _ in artwork }
+            // Advertise a large canonical bounds (CarPlay + lock screen
+            // both render up to ~600pt); we still hand back the same
+            // image and let UIKit downsample. Without this the system
+            // sometimes asked for a size we didn't advertise and skipped
+            // showing artwork at all in CarPlay's Now Playing template.
+            let bounds = CGSize(width: 600, height: 600)
+            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: bounds) { _ in artwork }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        // CarPlay's Now Playing template watches `playbackState` directly
+        // for the play/pause glyph — the `PlaybackRate` in the info dict
+        // is not enough on iOS 13+, the button stays stuck on "play"
+        // mid-playback unless we publish the explicit state too.
+        #if canImport(UIKit) && !os(watchOS)
+        MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused
+        #endif
     }
 
     // MARK: - Playback reporting

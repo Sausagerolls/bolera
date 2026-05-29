@@ -8,8 +8,10 @@ struct PaywallView_Mac: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Image(systemName: "music.note.tv.fill")
-                .font(.system(size: 54)).foregroundStyle(.tint)
+            Image("BoleraGlyph")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 80, height: 80)
             Text("Bolera Pro").font(.title).bold()
             Text("Unlock the full experience").foregroundStyle(.secondary)
 
@@ -17,8 +19,8 @@ struct PaywallView_Mac: View {
                 feature("slider.vertical.3", "Full 10-band EQ + presets")
                 feature("rectangle.stack.badge.minus", "Hide libraries you don't want")
                 feature("hand.raised.slash.fill", "Ignore tracks across devices")
-                feature("car.fill", "CarPlay (coming soon)")
                 feature("desktopcomputer", "Native Mac app, synced via iCloud")
+                feature("sparkles", "Priority access to new features")
             }
             .padding()
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))

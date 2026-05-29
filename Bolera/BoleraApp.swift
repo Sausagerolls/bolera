@@ -13,6 +13,8 @@ struct BoleraApp: App {
     @StateObject private var libVisibility = LibraryVisibilityStore.shared
     @StateObject private var ignoredTracks = IgnoredTracksStore.shared
     @StateObject private var daily = DailyPlaylistStore.shared
+    @StateObject private var playerVisibility = PlayerVisibilityState()
+    @StateObject private var nowPlaying = PlayerNowPlayingState()
 
     init() {
         LegacyMigration.runIfNeeded()
@@ -35,6 +37,8 @@ struct BoleraApp: App {
                 .environmentObject(libVisibility)
                 .environmentObject(ignoredTracks)
                 .environmentObject(daily)
+                .environmentObject(playerVisibility)
+                .environmentObject(nowPlaying)
                 .preferredColorScheme(.dark)
                 .tint(Color("AccentColor"))
         }
@@ -47,16 +51,32 @@ struct RootView: View {
     @AppStorage("bolera.onboarding.lastfmSeen") private var lastFmOnboardingSeen = false
 
     var body: some View {
-        Group {
-            if !auth.isAuthenticated {
-                ServerConnectionView()
-            } else if !lastFmOnboardingSeen && !lastFm.isAuthenticated {
-                LastFmOnboardingView { lastFmOnboardingSeen = true }
-            } else {
-                MainTabView()
+        ZStack {
+            // Global Bolera-purple gradient backdrop. Matches the app icon
+            // and softens the previously stark pure-black background.
+            BoleraBackground()
+            Group {
+                if !auth.isAuthenticated {
+                    ServerConnectionView()
+                } else if !lastFmOnboardingSeen && !lastFm.isAuthenticated {
+                    LastFmOnboardingView { lastFmOnboardingSeen = true }
+                } else {
+                    MainTabView()
+                }
             }
         }
         .animation(.easeInOut, value: auth.isAuthenticated)
         .animation(.easeInOut, value: lastFmOnboardingSeen)
+    }
+}
+
+/// App-wide background. Tuned to match the Mac app's neutral dark
+/// blue-grey chrome — softer than pure black, no overt purple tint, so
+/// album art carries the colour and the UI reads as one piece across
+/// iOS + macOS.
+struct BoleraBackground: View {
+    var body: some View {
+        Color(red: 0.09, green: 0.09, blue: 0.13)
+            .ignoresSafeArea()
     }
 }

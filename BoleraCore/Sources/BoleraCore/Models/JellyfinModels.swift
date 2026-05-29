@@ -110,11 +110,20 @@ public struct BaseItem: Codable, Identifiable, Hashable {
         AlbumArtist ?? AlbumArtists?.first?.Name ?? ArtistItems?.first?.Name ?? Artists?.first ?? ""
     }
 
-    /// Best item ID to request a Primary image for. Prefers album cover when present,
-    /// falls back to the item's own embedded art (works for Audio with embedded tags
-    /// but no separate album cover file on the server).
+    /// Best item ID to request a Primary image for. For an Audio track we
+    /// prefer the album cover, because per-track embedded art is rare —
+    /// most libraries store one cover per album folder. We use the album
+    /// id when EITHER the album image tag was fetched OR the track itself
+    /// exposes no Primary image of its own. (Track fetches like
+    /// `songs(parentId:)` don't request `AlbumPrimaryImageTag`, so relying
+    /// on that tag being present left the mini player's current-track art
+    /// blank — it fell through to `Items/{trackId}/Images/Primary`, which
+    /// 404s for tracks with no embedded art.) Only when the track genuinely
+    /// has its own art do we request the track id. Jellyfin serves
+    /// `Items/{albumId}/Images/Primary` fine without a tag.
     public var artworkItemId: String {
-        if type == "Audio", let albumId = AlbumId, AlbumPrimaryImageTag != nil {
+        if type == "Audio", let albumId = AlbumId, !albumId.isEmpty,
+           AlbumPrimaryImageTag != nil || ImageTags?["Primary"] == nil {
             return albumId
         }
         return Id

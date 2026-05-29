@@ -56,6 +56,15 @@ struct VisualizerView: View {
                 Spacer().frame(height: 40)
             }
         }
+        .onAppear {
+            // Gate the audio render thread's per-buffer publish on having
+            // an actual subscriber; this view is the only consumer of
+            // `processor.levels`.
+            player.activeAudioProcessor?.startObservingLevels()
+        }
+        .onDisappear {
+            player.activeAudioProcessor?.stopObservingLevels()
+        }
     }
 
     private var backdrop: some View {

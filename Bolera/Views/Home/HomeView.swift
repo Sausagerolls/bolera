@@ -9,7 +9,10 @@ struct HomeView: View {
     @EnvironmentObject var library: LibraryStore
     @EnvironmentObject var daily: DailyPlaylistStore
     @EnvironmentObject var lastFm: LastFmService
+    @EnvironmentObject var nowPlaying: PlayerNowPlayingState
+    @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
     @State private var showMoodMix = false
+    @State private var recentsRefresh: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -25,9 +28,11 @@ struct HomeView: View {
                         .padding(.horizontal)
                 }
 
-                moodMixCard
+                if moodMixEnabled {
+                    moodMixCard
+                }
 
-                if !daily.playlists.isEmpty {
+                if !daily.playlists.isEmpty || daily.isGenerating {
                     dailySection
                 }
 
@@ -57,6 +62,19 @@ struct HomeView: View {
         }
         .refreshable { await reload(force: true) }
         .task { await reload(force: false) }
+        .onChange(of: nowPlaying.current?.Id) { _, _ in
+            // Recently Played / On Repeat are server-derived. HomeView's
+            // `.task` runs once and the Home tab stays alive in the TabView,
+            // so returning to it after playing wouldn't re-fetch — recents
+            // stayed stale until app relaunch. Re-fetch shortly after each
+            // track change (debounced) so they reflect what was just played.
+            recentsRefresh?.cancel()
+            recentsRefresh = Task {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled, let url = auth.serverURL else { return }
+                await library.refresh(client: JellyfinClient(baseURL: url, auth: auth))
+            }
+        }
         .sheet(isPresented: $showMoodMix) {
             MoodMixSheet().environmentObject(auth)
         }
@@ -109,14 +127,25 @@ struct HomeView: View {
 
     private var dailySection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Daily Mixes").font(.title2.bold()).padding(.horizontal)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(daily.playlists) { playlist in
-                        DailyPlaylistTile(playlist: playlist)
-                    }
+            HStack(spacing: 8) {
+                Text("Daily Mixes").font(.title2.bold())
+                if daily.isGenerating {
+                    ProgressView().controlSize(.small)
+                    Text("Generating…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal)
+            }
+            .padding(.horizontal)
+            if !daily.playlists.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(daily.playlists) { playlist in
+                            DailyPlaylistTile(playlist: playlist)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
             }
         }
     }
@@ -286,7 +315,29 @@ struct MoodMixSheet: View {
             Text("Describe a vibe, an activity, a memory — the model picks genres and Bolera builds the playlist from your library.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if !LastFmService.shared.hasAppCredentials || !LastFmService.shared.isAuthenticated {
+                lastFmHint
+            }
         }
+    }
+
+    /// Inline nudge promoting Last.fm — results are dramatically better
+    /// once the user signs in (curated tag→artist data instead of just
+    /// Jellyfin genre tags).
+    private var lastFmHint: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle.fill")
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Connect Last.fm for much better mixes")
+                    .font(.caption.weight(.semibold))
+                Text("Tag→artist matching gives far richer, more tonally consistent results than genre-only search. Set up in Settings → Last.fm.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var inputField: some View {
@@ -444,47 +495,73 @@ final class MoodMixGenerator {
         let client = JellyfinClient(baseURL: serverURL, auth: auth)
         let lastFm = LastFmService.shared
 
+        print("[MoodMix] prompt=\(prompt) → tags=\(analysis.tags) decade=\(analysis.decade) mood=\(analysis.mood)")
+
         var combined: [BaseItem] = []
         var seenTrackIds: Set<String> = []
 
+        // Always run both pipelines and combine — gives the widest pool
+        // and protects against any one source coming back empty.
         if lastFm.hasAppCredentials {
-            combined = await buildViaLastFm(
+            let viaLastFm = await buildViaLastFm(
                 analysis: analysis,
                 lastFm: lastFm,
                 client: client,
                 seenTrackIds: &seenTrackIds
             )
+            print("[MoodMix] Last.fm pool: \(viaLastFm.count) tracks")
+            combined.append(contentsOf: viaLastFm)
         }
 
-        // Fall back to / augment with Jellyfin genre search when Last.fm
-        // gave us nothing or too little to work with.
-        if combined.count < 10 {
-            let extras = await buildViaJellyfinGenres(
+        let viaGenres = await buildViaJellyfinGenres(
+            analysis: analysis,
+            client: client,
+            seenTrackIds: &seenTrackIds
+        )
+        print("[MoodMix] Jellyfin genre pool: \(viaGenres.count) tracks")
+        combined.append(contentsOf: viaGenres)
+
+        // Tertiary source — Last.fm tag.getTopTracks. Returns specific
+        // tracks tagged with each mood/genre worldwide. Match by title +
+        // artist against the user's library. Catches mood-only tags like
+        // "morning" / "chill" where the top-artist endpoint produced no
+        // library overlap.
+        if lastFm.hasAppCredentials && combined.count < 10 {
+            let viaTagTracks = await buildViaLastFmTagTracks(
                 analysis: analysis,
+                lastFm: lastFm,
                 client: client,
                 seenTrackIds: &seenTrackIds
             )
-            combined.append(contentsOf: extras)
+            print("[MoodMix] Last.fm tag-tracks pool: \(viaTagTracks.count) tracks")
+            combined.append(contentsOf: viaTagTracks)
         }
 
-        // Optional decade filter — only apply if it still leaves a reasonable pool.
+        // Drop tracks the user has explicitly ignored (or any track whose
+        // artist or album sits on the ignore lists).
+        combined = IgnoredTracksStore.shared.filter(combined)
+
+        // Optional decade filter — only apply if it leaves a healthy pool
+        // AND doesn't shrink the result by more than 60%. Decade is a soft
+        // preference; a niche decade shouldn't gut an otherwise good mix.
         if let range = decadeRange(analysis.decade) {
             let filtered = combined.filter { ($0.ProductionYear).map(range.contains) ?? false }
-            if filtered.count >= 8 { combined = filtered }
+            let keepRatio = Double(filtered.count) / Double(max(1, combined.count))
+            if filtered.count >= 15 && keepRatio >= 0.4 { combined = filtered }
         }
-        // Diversity: cap per primary artist to 3 so one heavy-tagged artist
-        // doesn't dominate the mix.
+        // Diversity cap so one heavy-tagged artist doesn't dominate.
         var perArtist: [String: Int] = [:]
         let capped = combined.shuffled().filter { t in
             let key = t.primaryArtistName.lowercased()
             let c = perArtist[key] ?? 0
-            if c >= 3 { return false }
+            if c >= 4 { return false }
             perArtist[key] = c + 1
             return true
         }
         let final = Array(capped.prefix(25))
+        print("[MoodMix] combined=\(combined.count) → final=\(final.count)")
         if final.isEmpty {
-            onError("No matching tracks in your library — try a different phrase.")
+            onError("No matching tracks for tags: \(analysis.tags.joined(separator: ", ")). Try a different phrase.")
         } else {
             onResult(analysis.mood, final)
         }
@@ -502,19 +579,24 @@ final class MoodMixGenerator {
         var candidateNames: [String] = []
         for tag in analysis.tags.prefix(5) where !tag.isEmpty {
             let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let artists = try? await lastFm.topArtists(forTag: trimmed, limit: 25) {
+            do {
+                let artists = try await lastFm.topArtists(forTag: trimmed, limit: 50)
+                print("[MoodMix] Last.fm tag '\(trimmed)' → \(artists.count) artists")
                 for a in artists where !candidateNames.contains(where: {
                     $0.compare(a.name, options: .caseInsensitive) == .orderedSame
                 }) {
                     candidateNames.append(a.name)
                 }
+            } catch {
+                print("[MoodMix] Last.fm tag '\(trimmed)' failed: \(error)")
             }
-            if candidateNames.count >= 50 { break }
+            if candidateNames.count >= 200 { break }
         }
+        print("[MoodMix] \(candidateNames.count) unique Last.fm artist candidates")
 
         // Resolve each Last.fm artist → Jellyfin artist in library.
         for name in candidateNames {
-            if resolvedArtistIds.count >= 20 { break }
+            if resolvedArtistIds.count >= 30 { break }
             let hits = (try? await client.artists(search: name)) ?? []
             let needle = name.folding(options: .diacriticInsensitive, locale: .current)
             guard let match = hits.first(where: {
@@ -527,6 +609,51 @@ final class MoodMixGenerator {
             if let tracks = try? await client.topTracksForArtist(match.Id, name: match.Name, limit: 6) {
                 for t in tracks where t.type == "Audio" && seenTrackIds.insert(t.Id).inserted {
                     out.append(t)
+                }
+            }
+        }
+        return out
+    }
+
+    /// Last.fm tag.getTopTracks → match each (title, artist) pair against
+    /// the user's library. Slower than the artist pipeline (one search per
+    /// candidate track), so we cap aggressively and stop once we have a
+    /// reasonable pool.
+    private func buildViaLastFmTagTracks(analysis: MoodAnalysis,
+                                          lastFm: LastFmService,
+                                          client: JellyfinClient,
+                                          seenTrackIds: inout Set<String>) async -> [BaseItem] {
+        var candidates: [LastFmService.TagTrack] = []
+        for tag in analysis.tags.prefix(5) where !tag.isEmpty {
+            let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            do {
+                let tracks = try await lastFm.topTracks(forTag: trimmed, limit: 50)
+                candidates.append(contentsOf: tracks)
+                print("[MoodMix] Last.fm tag-tracks '\(trimmed)' → \(tracks.count)")
+            } catch {
+                print("[MoodMix] Last.fm tag-tracks '\(trimmed)' failed: \(error)")
+            }
+            if candidates.count >= 150 { break }
+        }
+        // Dedupe by (artist|title) key.
+        var seenKeys: Set<String> = []
+        let unique = candidates.filter { seenKeys.insert($0.id).inserted }
+
+        var out: [BaseItem] = []
+        var checked = 0
+        for cand in unique.shuffled() {
+            if out.count >= 20 || checked >= 60 { break }
+            checked += 1
+            // Search Jellyfin for the track title — many libraries only
+            // have it once, so the first artist-matching hit wins.
+            let hits = (try? await client.searchTracks(cand.name, limit: 6)) ?? []
+            let artistNeedle = cand.artist.name.folding(options: .diacriticInsensitive, locale: .current)
+            for hit in hits where hit.type == "Audio" && seenTrackIds.insert(hit.Id).inserted {
+                let artistMatch = hit.primaryArtistName
+                    .folding(options: .diacriticInsensitive, locale: .current)
+                if artistMatch.compare(artistNeedle, options: .caseInsensitive) == .orderedSame {
+                    out.append(hit)
+                    break
                 }
             }
         }
@@ -599,7 +726,7 @@ enum FoundationModelsAdapter {
     /// macro on iOS/macOS 26.
     @Generable
     struct Analysis {
-        @Guide(description: "3 to 5 Last.fm-style tags that fit the mood. Mix of music genres AND mood/descriptor adjectives that real listeners apply to tracks on Last.fm. Examples: 'synthwave', 'indie pop', 'chill', 'melancholic', 'driving', 'upbeat', 'late night', 'dreamy', 'instrumental', 'energetic'. Use lowercase. Avoid niche compound tags.")
+        @Guide(description: "4 to 5 Last.fm tags that fit the mood. MUST include at least 2 specific MUSIC GENRES (e.g. 'indie pop', 'folk', 'soul', 'jazz', 'singer-songwriter', 'acoustic', 'reggae', 'rock', 'hip hop', 'r&b', 'electronic', 'synthwave', 'pop', 'punk', 'country'). Then 1-3 mood/descriptor adjectives (e.g. 'chill', 'melancholic', 'driving', 'upbeat', 'energetic'). Use lowercase. Avoid niche compound tags.")
         let tags: [String]
 
         @Guide(description: "A decade preference matching the mood, like '70s', '80s', '90s', '00s', '10s', '20s'. Leave empty string if the mood doesn't suggest a decade.")
@@ -618,7 +745,8 @@ enum FoundationModelsAdapter {
             instructions: """
             You translate a user's mood phrase into music metadata for building a playlist.
             Always respond with the requested structured output.
-            For tags, mix 1-2 specific music genres (e.g. 'synthwave', 'indie rock') with 2-3 widely-used mood/descriptor tags (e.g. 'chill', 'melancholic', 'driving', 'upbeat').
+            For tags, ALWAYS include at least 2 specific music genres FIRST (e.g. 'indie pop', 'folk', 'soul', 'jazz', 'rock', 'hip hop', 'r&b', 'electronic'), then add 1-3 mood/descriptor adjectives.
+            Genre tags are mandatory — without them the playlist cannot be built.
             Prefer tags that real Last.fm users actually use to tag tracks — avoid obscure, niche, or compound tags.
             """
         )

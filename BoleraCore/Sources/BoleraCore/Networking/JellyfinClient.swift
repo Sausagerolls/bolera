@@ -141,8 +141,14 @@ public struct JellyfinClient {
     }
 
     public func artists(startIndex: Int = 0, limit: Int = 200, search: String? = nil, parentId: String? = nil) async throws -> [BaseItem] {
+        // `/Artists/AlbumArtists` returns only artists who have at
+        // least one album in the user's library — Jellyfin filters out
+        // the "phantom" MusicArtist entities it creates for track-level
+        // contributors (features, remixers, compilation guests).
+        // Plain `/Items?IncludeItemTypes=MusicArtist` would surface
+        // those too and clutter the A-Z list.
         var q: [URLQueryItem] = [
-            URLQueryItem(name: "IncludeItemTypes", value: "MusicArtist"),
+            URLQueryItem(name: "UserId", value: userId),
             URLQueryItem(name: "SortBy", value: "SortName"),
             URLQueryItem(name: "SortOrder", value: "Ascending"),
             URLQueryItem(name: "Recursive", value: "true"),
@@ -156,7 +162,7 @@ public struct JellyfinClient {
         if let p = parentId, !p.isEmpty {
             q.append(URLQueryItem(name: "ParentId", value: p))
         }
-        let req = try request("Users/\(userId)/Items", query: q)
+        let req = try request("Artists/AlbumArtists", query: q)
         let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
         return res.Items
     }
@@ -329,7 +335,118 @@ public struct JellyfinClient {
         ]
         let req = try request("Items/\(itemId)/InstantMix", query: q)
         let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
-        return res.Items
+        return res.Items.filter { $0.type == "Audio" }
+    }
+
+    /// Client-side artist radio anchored to the artist and its musical peers.
+    /// Jellyfin's artist InstantMix is a genre-only random shuffle over the
+    /// whole library (`InstantMixFromGenres(artist.Genres)`, `OrderBy=Random`,
+    /// no artist filter), so it drifts wildly off-genre for soundtrack /
+    /// compilation / multi-style artists whose genre tags are broad. Instead:
+    ///   1. Seed with the artist's own top tracks (keeps it about them).
+    ///   2. Blend top tracks from similar artists — Jellyfin's `Similar` plus
+    ///      any caller-supplied peers (e.g. Last.fm-resolved composers).
+    ///   3. Dedupe by track Id, shuffle, cap to `limit`.
+    ///   4. Fall back to song-seeded → artist-seeded InstantMix → shuffled seed
+    ///      so Radio never returns empty.
+    public func artistRadio(artistId: String,
+                            name: String? = nil,
+                            extraArtists: [BaseItem] = [],
+                            limit: Int = 100) async throws -> [BaseItem] {
+        let seed = (try? await topTracksForArtist(artistId, name: name, limit: 25)) ?? []
+
+        var peers = (try? await similarArtists(artistId, limit: 12)) ?? []
+        peers.append(contentsOf: extraArtists)
+        var peerSeen: Set<String> = [artistId]
+        peers = peers.filter { $0.type == "MusicArtist" && peerSeen.insert($0.Id).inserted }
+        peers = Array(peers.prefix(10))
+
+        let peerTracks: [BaseItem] = await withTaskGroup(of: [BaseItem].self) { group in
+            for p in peers {
+                group.addTask {
+                    (try? await self.topTracksForArtist(p.Id, name: p.Name, limit: 5)) ?? []
+                }
+            }
+            var acc: [BaseItem] = []
+            for await t in group { acc.append(contentsOf: t) }
+            return acc
+        }
+
+        var seen: Set<String> = []
+        var mix = (seed + peerTracks).filter {
+            $0.type == "Audio" && seen.insert($0.Id).inserted
+        }
+        mix.shuffle()
+        mix = Array(mix.prefix(limit))
+        if !mix.isEmpty { return mix }
+
+        if let first = seed.first,
+           let m = try? await instantMix(itemId: first.Id), !m.isEmpty { return m }
+        if let m = try? await instantMix(itemId: artistId), !m.isEmpty { return m }
+        return seed.shuffled()
+    }
+
+    /// An external track reference (e.g. from Last.fm) to resolve against the
+    /// user's library by title + artist.
+    public struct TrackRef: Sendable, Hashable {
+        public let artist: String
+        public let title: String
+        public init(artist: String, title: String) {
+            self.artist = artist
+            self.title = title
+        }
+    }
+
+    /// Resolve external (artist, title) references to concrete tracks in the
+    /// user's library, matching by title then artist. Used to turn Last.fm
+    /// similar-track / similar-artist recommendations into playable local
+    /// items. Runs searches in small concurrent batches so a big seed list
+    /// doesn't hammer the server with hundreds of simultaneous requests.
+    public func resolveLocalTracks(_ refs: [TrackRef], limit: Int = 100) async -> [BaseItem] {
+        let bounded = Array(refs.prefix(60))
+        var found: [BaseItem] = []
+        let chunkSize = 8
+        var i = 0
+        while i < bounded.count {
+            let chunk = Array(bounded[i..<min(i + chunkSize, bounded.count)])
+            let batch: [BaseItem] = await withTaskGroup(of: BaseItem?.self) { group in
+                for ref in chunk {
+                    group.addTask { await self.resolveOneTrack(ref) }
+                }
+                var acc: [BaseItem] = []
+                for await item in group { if let item { acc.append(item) } }
+                return acc
+            }
+            found.append(contentsOf: batch)
+            if found.count >= limit { break }
+            i += chunkSize
+        }
+        var seen: Set<String> = []
+        return found.filter { seen.insert($0.Id).inserted }
+    }
+
+    private func resolveOneTrack(_ ref: TrackRef) async -> BaseItem? {
+        let hits = (try? await searchTracks(ref.title, limit: 6)) ?? []
+        let wantTitle = Self.norm(ref.title)
+        let wantArtist = Self.norm(ref.artist)
+        let exact = hits.filter { Self.norm($0.Name) == wantTitle }
+        let pool = exact.isEmpty ? hits.filter { Self.norm($0.Name).contains(wantTitle) } : exact
+        return pool.first { Self.artistNames(of: $0).contains { Self.norm($0) == wantArtist } } ?? pool.first
+    }
+
+    private static func norm(_ s: String) -> String {
+        s.folding(options: .diacriticInsensitive, locale: .current)
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func artistNames(of item: BaseItem) -> [String] {
+        var names: [String] = []
+        if let a = item.AlbumArtist { names.append(a) }
+        if let a = item.Artists { names.append(contentsOf: a) }
+        if let a = item.ArtistItems { names.append(contentsOf: a.map { $0.Name }) }
+        if let a = item.AlbumArtists { names.append(contentsOf: a.map { $0.Name }) }
+        return names
     }
 
     // MARK: - Search
@@ -396,6 +513,22 @@ public struct JellyfinClient {
         var req = try request("Playlists/\(playlistId)/Items", query: q)
         req.httpMethod = "POST"
         _ = try await sendVoid(req)
+    }
+
+    /// Search audio tracks in the user's library by title. Used by mood-based
+    /// mix generation to resolve Last.fm-suggested track titles to local items.
+    public func searchTracks(_ term: String, limit: Int = 8) async throws -> [BaseItem] {
+        guard !term.isEmpty else { return [] }
+        let q: [URLQueryItem] = [
+            URLQueryItem(name: "IncludeItemTypes", value: "Audio"),
+            URLQueryItem(name: "SearchTerm", value: term),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "Limit", value: String(limit)),
+            URLQueryItem(name: "UserId", value: userId)
+        ]
+        let req = try request("Users/\(userId)/Items", query: q)
+        let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
+        return res.Items.filter { $0.type == "Audio" }
     }
 
     /// Fetch audio tracks tagged with the given genre. Used by mood-based

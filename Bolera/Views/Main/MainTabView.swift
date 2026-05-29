@@ -3,38 +3,45 @@ import BoleraCore
 
 struct MainTabView: View {
     @EnvironmentObject var auth: AuthManager
-    @EnvironmentObject var player: AudioPlayer
     @State private var showNowPlaying = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
             TabView {
                 Tab("Home", systemImage: "house.fill") {
-                    NavigationStack { HomeView() }
-                        .modifier(MiniPlayerScrollInset(active: player.current != nil))
+                    NavigationStack {
+                        HomeView()
+                            .background(BoleraBackground())
+                    }
+                    .modifier(MiniPlayerScrollInset())
                 }
                 Tab("Library", systemImage: "music.note.list") {
-                    NavigationStack { LibraryView() }
-                        .modifier(MiniPlayerScrollInset(active: player.current != nil))
+                    NavigationStack {
+                        LibraryView()
+                            .background(BoleraBackground())
+                    }
+                    .modifier(MiniPlayerScrollInset())
                 }
                 Tab("Settings", systemImage: "gear") {
-                    NavigationStack { SettingsView() }
-                        .modifier(MiniPlayerScrollInset(active: player.current != nil))
+                    NavigationStack {
+                        SettingsView()
+                            .background(BoleraBackground())
+                    }
+                    .modifier(MiniPlayerScrollInset())
                 }
                 Tab("Search", systemImage: "magnifyingglass", role: .search) {
-                    NavigationStack { SearchView() }
-                        .modifier(MiniPlayerScrollInset(active: player.current != nil))
+                    NavigationStack {
+                        SearchView()
+                            .background(BoleraBackground())
+                    }
+                    .modifier(MiniPlayerScrollInset())
                 }
             }
 
-            if player.current != nil {
-                MiniPlayerView()
-                    .contentShape(Rectangle())
-                    .onTapGesture { showNowPlaying = true }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 60)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+            // Mini-player overlay isolated into its own view so the
+            // AudioPlayer's 10×/sec time updates don't re-evaluate the
+            // entire TabView body on every tick (caused scroll jitter).
+            MiniPlayerOverlay(showNowPlaying: $showNowPlaying)
         }
         .onAppear {
             AudioPlayer.shared.authManager = auth
@@ -45,19 +52,46 @@ struct MainTabView: View {
     }
 }
 
-/// Adds a bottom content margin to each tab's scrollable surface roughly
-/// matching the mini player's height so last items scroll up clear of the
-/// floating player. contentMargins reaches into the nearest ScrollView /
-/// List, including plain-styled Lists that ignore safeAreaInset.
-private struct MiniPlayerScrollInset: ViewModifier {
-    let active: Bool
-    func body(content: Content) -> some View {
-        if active {
-            content
-                .contentMargins(.bottom, 80, for: .scrollContent)
-                .contentMargins(.bottom, 80, for: .scrollIndicators)
-        } else {
-            content
+/// Hosts the mini player conditional. Observes the narrow visibility
+/// flag rather than the full `AudioPlayer`, so the body only re-runs
+/// when playback starts or stops — not on every 0.1s tick. (When the
+/// outer wrapper re-ran 10×/sec the SwiftUI diffing + ultraThinMaterial
+/// recomposition stole main-thread time from the scroll handler in the
+/// visible tab, producing jitter.)
+private struct MiniPlayerOverlay: View {
+    @EnvironmentObject var visibility: PlayerVisibilityState
+    @Binding var showNowPlaying: Bool
+
+    var body: some View {
+        if visibility.isVisible {
+            MiniPlayerView()
+                .contentShape(Rectangle())
+                .onTapGesture { showNowPlaying = true }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 60)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
         }
+    }
+}
+
+/// Reserves bottom content margin equal to the mini player's height so
+/// list/scroll content scrolls clear of it. Observes a narrow visibility
+/// flag rather than the full `AudioPlayer` — without this distinction
+/// the inset modifier re-evaluated every 0.1s on `currentTime` ticks,
+/// causing list scrolling to stutter while music played.
+private struct MiniPlayerScrollInset: ViewModifier {
+    @EnvironmentObject var visibility: PlayerVisibilityState
+
+    func body(content: Content) -> some View {
+        // Apply the inset unconditionally and vary only the VALUE. An
+        // `if/else` here produces two structurally distinct view trees, so
+        // when `isVisible` flips (first track starts) SwiftUI rebuilds the
+        // wrapped NavigationStack from scratch and the nav path pops to root
+        // — kicking the user out of any pushed detail view. A branchless
+        // modifier keeps the stack's identity stable.
+        let inset: CGFloat = visibility.isVisible ? 80 : 0
+        content
+            .contentMargins(.bottom, inset, for: .scrollContent)
+            .contentMargins(.bottom, inset, for: .scrollIndicators)
     }
 }

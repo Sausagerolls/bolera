@@ -3,7 +3,6 @@ import BoleraCore
 
 struct SettingsView: View {
     @EnvironmentObject var auth: AuthManager
-    @EnvironmentObject var player: AudioPlayer
     @EnvironmentObject var pro: ProEntitlementStore
     @AppStorage("bolera.maxBitrate") private var maxBitrate: Int = 320
     @State private var cacheSizeText: String = "—"
@@ -22,6 +21,14 @@ struct SettingsView: View {
                 Button("Sign Out", role: .destructive) { auth.logout() }
             }
 
+            Section("Services") {
+                NavigationLink {
+                    LastFmSettingsView()
+                } label: {
+                    Label("Last.fm", systemImage: "waveform")
+                }
+            }
+
             Section("Playback") {
                 Picker("Max Streaming Bitrate", selection: $maxBitrate) {
                     Text("96 kbps").tag(96)
@@ -31,18 +38,7 @@ struct SettingsView: View {
                     Text("320 kbps").tag(320)
                     Text("Lossless").tag(1411)
                 }
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text("Crossfade")
-                        Spacer()
-                        Text(player.crossfadeDuration > 0
-                             ? String(format: "%.0f sec", player.crossfadeDuration)
-                             : "Off")
-                            .foregroundStyle(.secondary).font(.caption)
-                    }
-                    Slider(value: $player.crossfadeDuration, in: 0...12, step: 1)
-                }
-                .padding(.vertical, 4)
+                CrossfadeRow()
                 NavigationLink {
                     EQView()
                 } label: {
@@ -69,12 +65,16 @@ struct SettingsView: View {
                 .disabled(clearingCache)
             }
 
-            Section("Services") {
-                NavigationLink {
-                    LastFmSettingsView()
-                } label: {
-                    Label("Last.fm", systemImage: "waveform")
-                }
+            Section {
+                Toggle("Enable AI Mood Mixes",
+                       isOn: Binding(
+                        get: { UserDefaults.standard.object(forKey: "bolera.ai.moodMixEnabled") as? Bool ?? true },
+                        set: { UserDefaults.standard.set($0, forKey: "bolera.ai.moodMixEnabled") }))
+            } header: {
+                Text("AI Features")
+            } footer: {
+                Text("Make-a-Mix uses Apple Intelligence to turn a mood phrase into a playlist. Last.fm sign-in dramatically improves results.")
+                    .font(.caption)
             }
 
             Section("Bolera Pro") {
@@ -93,7 +93,7 @@ struct SettingsView: View {
                     NavigationLink {
                         IgnoredTracksView()
                     } label: {
-                        Label("Ignored Tracks", systemImage: "hand.raised.slash")
+                        Label("Ignored Items", systemImage: "hand.raised.slash")
                     }
                 } else {
                     Button {
@@ -121,11 +121,21 @@ struct SettingsView: View {
                      destination: URL(string: "https://giantmushroom.studio/bolera")!)
             }
 
+            Section("Legal") {
+                Link(destination: URL(string: "https://giantmushroom.studio/bolera/privacy.html")!) {
+                    Label("Privacy Policy", systemImage: "hand.raised")
+                }
+                Link(destination: URL(string: "https://giantmushroom.studio/bolera/terms.html")!) {
+                    Label("Terms of Use", systemImage: "doc.text")
+                }
+            }
+
             Section("About") {
                 LabeledContent("Version", value: AuthManager.clientVersion)
                 LabeledContent("Device ID", value: String(AuthManager.deviceId.prefix(8)))
             }
         }
+        .scrollContentBackground(.hidden)
         .navigationTitle("Settings")
         .task { refreshCacheSize() }
         .sheet(isPresented: $showPaywall) {
@@ -177,6 +187,10 @@ struct SettingsView: View {
     }
 
     private func cacheDirsTotalBytes() async -> UInt64 {
+        return await Self._cacheDirsTotalBytes()
+    }
+
+    private static func _cacheDirsTotalBytes() async -> UInt64 {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         var total: UInt64 = 0
         for sub in ["ImageCache", "LibraryCache"] {
@@ -190,5 +204,25 @@ struct SettingsView: View {
             }
         }
         return total
+    }
+}
+
+/// Isolated subview that owns the AudioPlayer dependency so the whole
+/// SettingsView body doesn't rebuild every time `currentTime` ticks.
+private struct CrossfadeRow: View {
+    @EnvironmentObject var player: AudioPlayer
+    var body: some View {
+        VStack(alignment: .leading) {
+            HStack {
+                Text("Crossfade")
+                Spacer()
+                Text(player.crossfadeDuration > 0
+                     ? String(format: "%.0f sec", player.crossfadeDuration)
+                     : "Off")
+                    .foregroundStyle(.secondary).font(.caption)
+            }
+            Slider(value: $player.crossfadeDuration, in: 0...12, step: 1)
+        }
+        .padding(.vertical, 4)
     }
 }

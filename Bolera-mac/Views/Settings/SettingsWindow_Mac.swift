@@ -138,6 +138,7 @@ private struct GeneralSettings_Mac: View {
 private struct PlaybackSettings_Mac: View {
     @EnvironmentObject var player: AudioPlayer
     @Environment(\.openWindow) private var openWindow
+    @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
 
     var body: some View {
         Form {
@@ -155,6 +156,11 @@ private struct PlaybackSettings_Mac: View {
                     openWindow(id: "eq")
                 }
                 Text("Or use Window → Equalizer (⌘⇧E).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("AI Features") {
+                Toggle("Enable AI Mood Mixes", isOn: $moodMixEnabled)
+                Text("Make-a-Mix uses Apple Intelligence to turn a mood phrase into a playlist. Last.fm sign-in dramatically improves results.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -205,30 +211,50 @@ private struct ProSettings_Mac: View {
                 }
             }
 
-            Section("Ignored Tracks (\(ignored.ignored.count))") {
-                if ignored.ignored.isEmpty {
-                    Text("Right-click a track and choose Ignore.")
-                        .foregroundStyle(.secondary).font(.caption)
-                } else {
-                    List {
-                        ForEach(Array(ignored.ignored), id: \.self) { id in
-                            HStack {
-                                Text(ignored.labels[id] ?? id).lineLimit(1)
-                                Spacer()
-                                Button("Remove") { ignored.unignore(id) }
-                                    .buttonStyle(.borderless)
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 160)
-                }
-            }
+            ignoreSection(title: "Ignored Tracks",
+                          empty: "Right-click a track and choose Ignore.",
+                          ids: ignored.ignored,
+                          remove: { ignored.unignore($0) })
+
+            ignoreSection(title: "Ignored Artists",
+                          empty: "Right-click an artist tile and choose Ignore Artist.",
+                          ids: ignored.ignoredArtists,
+                          remove: { ignored.unignoreArtist($0) })
+
+            ignoreSection(title: "Ignored Albums",
+                          empty: "Right-click an album tile and choose Ignore Album.",
+                          ids: ignored.ignoredAlbums,
+                          remove: { ignored.unignoreAlbum($0) })
         }
         .formStyle(.grouped)
         .padding()
         .task { await loadLibraries() }
         .sheet(isPresented: $showPaywall) {
             PaywallView_Mac().environmentObject(pro)
+        }
+    }
+
+    @ViewBuilder
+    private func ignoreSection(title: String,
+                               empty: String,
+                               ids: Set<String>,
+                               remove: @escaping (String) -> Void) -> some View {
+        Section("\(title) (\(ids.count))") {
+            if ids.isEmpty {
+                Text(empty).foregroundStyle(.secondary).font(.caption)
+            } else {
+                List {
+                    ForEach(Array(ids), id: \.self) { id in
+                        HStack {
+                            Text(ignored.labels[id] ?? id).lineLimit(1)
+                            Spacer()
+                            Button("Remove") { remove(id) }
+                                .buttonStyle(.borderless)
+                        }
+                    }
+                }
+                .frame(maxHeight: 140)
+            }
         }
     }
 
@@ -267,6 +293,15 @@ private struct AboutSettings_Mac: View {
             }
             .controlSize(.large)
             .padding(.top, 8)
+
+            HStack(spacing: 16) {
+                Link("Privacy Policy",
+                     destination: URL(string: "https://giantmushroom.studio/bolera/privacy.html")!)
+                Link("Terms of Use",
+                     destination: URL(string: "https://giantmushroom.studio/bolera/terms.html")!)
+            }
+            .font(.caption)
+            .padding(.top, 4)
 
             Spacer()
         }

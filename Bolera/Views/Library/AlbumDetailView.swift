@@ -4,13 +4,14 @@ import BoleraCore
 struct AlbumDetailView: View {
     let album: BaseItem
     @EnvironmentObject var auth: AuthManager
+    @ObservedObject private var downloads = DownloadManager.shared
     @State private var songs: [BaseItem] = []
     @State private var isFavorite: Bool = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                JellyfinImage(itemId: album.Id, tag: album.ImageTags?["Primary"], maxWidth: 800, cornerRadius: 14)
+                JellyfinImage(itemId: album.Id, tag: album.ImageTags?["Primary"], maxWidth: 600, cornerRadius: 14)
                     .frame(width: 260, height: 260)
                     .shadow(radius: 20)
                 VStack(spacing: 4) {
@@ -62,17 +63,24 @@ struct AlbumDetailView: View {
                 Button {
                     downloadAll()
                 } label: {
-                    Label(allDownloadedLabel, systemImage: "arrow.down.circle")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(.ultraThinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    VStack(spacing: 6) {
+                        Label(allDownloadedLabel, systemImage: "arrow.down.circle")
+                        if let p = albumProgress {
+                            ProgressView(value: p).tint(.accentColor)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
+                .disabled(downloadedCount == songs.count && !songs.isEmpty)
                 .padding(.horizontal)
 
                 Color.clear.frame(height: 120)
             }
         }
+        .background(BoleraBackground().ignoresSafeArea())
         .navigationTitle(album.Name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -101,21 +109,33 @@ struct AlbumDetailView: View {
         Task { try? await client.setFavorite(album.Id, favorite: isFavorite) }
     }
 
+    private var downloadedCount: Int {
+        songs.filter { downloads.completed.contains($0.Id) }.count
+    }
+
+    private var downloadingSongs: [BaseItem] {
+        songs.filter { downloads.inProgress.keys.contains($0.Id) }
+    }
+
+    /// Count-based (completed / total) so the bar only advances. A byte-sum
+    /// over the active downloads jitters because the active set churns as
+    /// tracks finish and others start at total=0 (non-monotonic fraction).
+    private var albumProgress: Double? {
+        guard !downloadingSongs.isEmpty, !songs.isEmpty else { return nil }
+        return Double(downloadedCount) / Double(songs.count)
+    }
+
     private var allDownloadedLabel: String {
-        let dm = DownloadManager.shared
-        let done = songs.filter { dm.isDownloaded($0.Id) }.count
-        if done == songs.count, !songs.isEmpty { return "Downloaded" }
-        if done > 0 { return "Download Rest (\(songs.count - done))" }
+        if !downloadingSongs.isEmpty { return "Downloading \(downloadedCount)/\(songs.count)" }
+        if downloadedCount == songs.count, !songs.isEmpty { return "Downloaded" }
+        if downloadedCount > 0 { return "Download Rest (\(songs.count - downloadedCount))" }
         return "Download Album"
     }
 
     private func downloadAll() {
         guard let url = auth.serverURL else { return }
         let client = JellyfinClient(baseURL: url, auth: auth)
-        let dm = DownloadManager.shared
-        for song in songs where !dm.isDownloaded(song.Id) {
-            dm.download(song, using: client)
-        }
+        DownloadManager.shared.downloadAlbum(album, tracks: songs, using: client)
     }
 
     @ViewBuilder
@@ -127,7 +147,7 @@ struct AlbumDetailView: View {
         } else {
             Button {
                 guard let url = auth.serverURL else { return }
-                DownloadManager.shared.download(song, using: JellyfinClient(baseURL: url, auth: auth))
+                DownloadManager.shared.download(song, using: JellyfinClient(baseURL: url, auth: auth), individual: true)
             } label: { Label("Download", systemImage: "arrow.down.circle") }
         }
     }

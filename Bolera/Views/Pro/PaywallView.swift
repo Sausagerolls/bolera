@@ -53,9 +53,10 @@ struct PaywallView: View {
 
     private var header: some View {
         VStack(spacing: 14) {
-            Image(systemName: "music.note.tv.fill")
-                .font(.system(size: 64, weight: .bold))
-                .foregroundStyle(.tint)
+            Image("BoleraGlyph")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 96, height: 96)
             Text("Bolera Pro")
                 .font(.system(size: 34, weight: .heavy))
             Text("Unlock the full experience")
@@ -72,8 +73,8 @@ struct PaywallView: View {
                        "Hide entire Jellyfin libraries — your Christmas songs stay out of the rotation.")
             featureRow("hand.raised.slash.fill", "Ignore tracks",
                        "Silently skip songs you never want to hear, synced across devices.")
-            featureRow("car.fill", "CarPlay (coming soon)",
-                       "Full Jellyfin browser in CarPlay once Apple grants the entitlement.")
+            featureRow("sparkles", "Priority access to new features",
+                       "Pro unlocks new features first. You're the reason Bolera keeps shipping.")
         }
         .padding(20)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))

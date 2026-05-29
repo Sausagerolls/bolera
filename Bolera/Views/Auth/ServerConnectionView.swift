@@ -20,9 +20,10 @@ struct ServerConnectionView: View {
                 VStack(spacing: 24) {
                     Spacer().frame(height: 60)
                     VStack(spacing: 8) {
-                        Image(systemName: "waveform.circle.fill")
-                            .font(.system(size: 72))
-                            .foregroundStyle(.tint)
+                        Image("BoleraGlyph")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 96, height: 96)
                         Text("Bolera")
                             .font(.system(size: 36, weight: .heavy))
                         Text("Music from your Jellyfin server")
@@ -73,7 +74,7 @@ struct ServerConnectionView: View {
     }
 
     private var canSubmit: Bool {
-        URL(string: server) != nil && !username.isEmpty && !password.isEmpty
+        URL(string: server) != nil && !username.isEmpty
     }
 
     private func labeled(_ title: String, placeholder: String, text: Binding<String>, keyboard: UIKeyboardType = .default) -> some View {
@@ -127,9 +128,10 @@ struct LastFmOnboardingView: View {
                 VStack(spacing: 28) {
                     Spacer().frame(height: 60)
                     VStack(spacing: 10) {
-                        Image(systemName: "waveform.path.ecg.rectangle.fill")
-                            .font(.system(size: 60))
-                            .foregroundStyle(.tint)
+                        Image("BoleraGlyph")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 84, height: 84)
                         Text("Connect Last.fm")
                             .font(.system(size: 30, weight: .heavy))
                         Text("Optional, but it makes Bolera better.")
@@ -145,8 +147,8 @@ struct LastFmOnboardingView: View {
                                    title: "Artist Bios",
                                    subtitle: "Background info on every artist page.")
                         FeatureRow(icon: "wand.and.stars",
-                                   title: "Smarter Daily Mixes",
-                                   subtitle: "Playlists informed by similar artists.")
+                                   title: "Better AI + Daily Mixes",
+                                   subtitle: "The Make-a-Mix generator and daily playlists are dramatically richer with Last.fm tag data.")
                         FeatureRow(icon: "antenna.radiowaves.left.and.right",
                                    title: "Optional Scrobbling",
                                    subtitle: "Build your listening history on last.fm.")
@@ -176,7 +178,7 @@ struct LastFmOnboardingView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                        .disabled(signingIn || username.isEmpty || password.isEmpty)
+                        .disabled(signingIn || username.isEmpty)
 
                         Button("Skip for now", action: onFinish)
                             .buttonStyle(.plain)

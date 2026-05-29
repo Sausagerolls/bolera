@@ -21,6 +21,8 @@ struct NowPlayingContent: View {
     @State private var saveQueueAsPlaylistShown = false
     @State private var visualizerOn = false
     @State private var navPath: [BaseItem] = []
+    @State private var similarTracks: [BaseItem] = []
+    @State private var showSimilarSheet = false
 
     /// Live drag offset for finger-following dismissal. Resets after gesture ends.
     @GestureState private var dragOffset: CGFloat = 0
@@ -103,9 +105,15 @@ struct NowPlayingContent: View {
                 saveQueue:    { showActions = false; saveQueueAsPlaylistShown = true },
                 clearQueue:   { showActions = false; player.stop() },
                 share:        { showActions = false; presentShare() },
-                downloadAction: { showActions = false; downloadCurrent() }
+                downloadAction: { showActions = false; downloadCurrent() },
+                goToAlbum:    { showActions = false; Task { await goToCurrentAlbum() } },
+                goToArtist:   { showActions = false; Task { await goToCurrentArtist() } },
+                showSimilar:  { showActions = false; Task { await fetchSimilar() } }
             )
             .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showSimilarSheet) {
+            SimilarTracksSheet(items: similarTracks).presentationDetents([.medium, .large])
         }
         .sheet(item: $addToPlaylistTarget) { item in
             AddToPlaylistSheet(item: item).presentationDetents([.medium, .large])
@@ -115,6 +123,41 @@ struct NowPlayingContent: View {
         }
         .sheet(isPresented: $showShareSheet) {
             ShareSheet(items: shareItems)
+        }
+    }
+
+    /// Async fetch of the current track's album item, then push onto the
+    /// Now Playing NavigationStack. Lives here (not in the actions sheet)
+    /// because the sheet's own NavigationStack is torn down when it
+    /// dismisses, so any nav state inside it never gets a chance to
+    /// resolve.
+    private func goToCurrentAlbum() async {
+        guard let cur = player.current, let url = auth.serverURL else { return }
+        let albumId = cur.AlbumId ?? cur.Id
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        if let album = try? await client.item(albumId) {
+            await MainActor.run { navPath.append(album) }
+        }
+    }
+
+    private func goToCurrentArtist() async {
+        guard let cur = player.current, let url = auth.serverURL else { return }
+        let artistId = cur.AlbumArtists?.first?.Id ?? cur.ArtistItems?.first?.Id
+        guard let id = artistId else { return }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        if let artist = try? await client.item(id) {
+            await MainActor.run { navPath.append(artist) }
+        }
+    }
+
+    private func fetchSimilar() async {
+        guard let cur = player.current, let url = auth.serverURL else { return }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        if let mix = try? await client.instantMix(itemId: cur.Id) {
+            await MainActor.run {
+                similarTracks = mix
+                showSimilarSheet = true
+            }
         }
     }
 
@@ -274,7 +317,7 @@ struct NowPlayingContent: View {
         if downloads.isDownloaded(item.Id) {
             downloads.delete(item.Id)
         } else {
-            downloads.download(item, using: JellyfinClient(baseURL: url, auth: auth))
+            downloads.download(item, using: JellyfinClient(baseURL: url, auth: auth), individual: true)
         }
     }
 
@@ -443,6 +486,8 @@ struct NowPlayingActionsSheet: View {
     @EnvironmentObject var player: AudioPlayer
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var downloads: DownloadManager
+    @EnvironmentObject var ignored: IgnoredTracksStore
+    @EnvironmentObject var pro: ProEntitlementStore
     @Environment(\.dismiss) var dismiss
 
     var openLyrics: () -> Void
@@ -454,11 +499,9 @@ struct NowPlayingActionsSheet: View {
     var clearQueue: () -> Void
     var share: () -> Void
     var downloadAction: () -> Void
-
-    @State private var goAlbum: BaseItem?
-    @State private var goArtist: BaseItem?
-    @State private var similarTracks: [BaseItem] = []
-    @State private var showSimilarSheet = false
+    var goToAlbum: () -> Void
+    var goToArtist: () -> Void
+    var showSimilar: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -469,15 +512,24 @@ struct NowPlayingActionsSheet: View {
                 Section {
                     row("text.badge.plus", "Add to Playlist…", action: addToPlaylist)
                     row("text.quote", "Show Lyrics", action: openLyrics)
-                    row("opticaldisc", "Go to Album", subtitle: player.current?.Album, action: openGoToAlbum)
-                    row("person.crop.circle", "Go to Artist", subtitle: player.current?.primaryArtistName, action: openGoToArtist)
-                    row("music.note.list", "Show Similar Tracks", action: openSimilar)
+                    row("opticaldisc", "Go to Album", subtitle: player.current?.Album, action: goToAlbum)
+                    row("person.crop.circle", "Go to Artist", subtitle: player.current?.primaryArtistName, action: goToArtist)
+                    row("music.note.list", "Show Similar Tracks", action: showSimilar)
                     row("moon.zzz", "Sleep Timer", action: openSleep)
                     row("square.and.arrow.up", "Share…", action: share)
                     row("waveform.path.ecg", "Visualizer", action: openVisualizer)
                     row(isDownloaded ? "checkmark.circle.fill" : "arrow.down.circle",
                         isDownloaded ? "Downloaded" : "Download", action: downloadAction)
                     favoriteRow
+                }
+                if pro.isPro {
+                    Section("Pro") {
+                        Button(role: .destructive) {
+                            skipAndIgnore()
+                        } label: {
+                            Label("Skip & Ignore Track", systemImage: "hand.raised.slash.fill")
+                        }
+                    }
                 }
                 Section {
                     row("list.bullet", "Show Queue", action: openQueue)
@@ -491,12 +543,13 @@ struct NowPlayingActionsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Close") { dismiss() } } }
         }
-        .navigationDestination(isPresented: Binding(get: { goAlbum != nil }, set: { if !$0 { goAlbum = nil } })) {
-            if let album = goAlbum { AlbumDetailView(album: album) }
-        }
-        .sheet(isPresented: $showSimilarSheet) {
-            SimilarTracksSheet(items: similarTracks).presentationDetents([.medium, .large])
-        }
+    }
+
+    private func skipAndIgnore() {
+        guard let cur = player.current else { return }
+        ignored.ignore(cur)
+        player.next()
+        dismiss()
     }
 
     @ViewBuilder
@@ -547,38 +600,6 @@ struct NowPlayingActionsSheet: View {
         return downloads.isDownloaded(id)
     }
 
-    private func openGoToAlbum() {
-        guard let cur = player.current, let url = auth.serverURL else { return }
-        let albumId = cur.AlbumId ?? cur.Id
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        Task {
-            if let album = try? await client.item(albumId) {
-                await MainActor.run { goAlbum = album; dismiss() }
-            }
-        }
-    }
-
-    private func openGoToArtist() {
-        guard let cur = player.current, let url = auth.serverURL else { return }
-        let artistId = cur.AlbumArtists?.first?.Id ?? cur.ArtistItems?.first?.Id
-        guard let id = artistId else { return }
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        Task {
-            if let artist = try? await client.item(id) {
-                await MainActor.run { goArtist = artist; dismiss() }
-            }
-        }
-    }
-
-    private func openSimilar() {
-        guard let cur = player.current, let url = auth.serverURL else { return }
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        Task {
-            if let mix = try? await client.instantMix(itemId: cur.Id) {
-                await MainActor.run { similarTracks = mix; showSimilarSheet = true }
-            }
-        }
-    }
 }
 
 // MARK: - Add to playlist sheet
@@ -837,6 +858,12 @@ struct InlineVisualizerView: View {
                     if s == style { Image(systemName: "checkmark") }
                 }
             }
+        }
+        .onAppear {
+            player.activeAudioProcessor?.startObservingLevels()
+        }
+        .onDisappear {
+            player.activeAudioProcessor?.stopObservingLevels()
         }
     }
 

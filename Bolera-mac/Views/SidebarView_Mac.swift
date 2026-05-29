@@ -117,6 +117,15 @@ struct SidebarView_Mac: View {
             .background(.bar)
         }
         .task(id: auth.userId) { await loadAvatar() }
+        // Refetch the user avatar whenever the app becomes active so
+        // changes made on the Jellyfin server show up without an app
+        // restart. Adds a cache-busting timestamp so ImageCache misses
+        // and we get the latest image.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)
+        ) { _ in
+            Task { await loadAvatar(force: true) }
+        }
     }
 
     @ViewBuilder
@@ -132,7 +141,7 @@ struct SidebarView_Mac: View {
         }
     }
 
-    private func loadAvatar() async {
+    private func loadAvatar(force: Bool = false) async {
         guard let serverURL = auth.serverURL,
               let userId = auth.userId else {
             await MainActor.run { self.avatar = nil }
@@ -142,12 +151,19 @@ struct SidebarView_Mac: View {
         // primary image; ImageCache silently returns nil on miss.
         guard var comps = URLComponents(url: serverURL.appendingPathComponent("Users/\(userId)/Images/Primary"),
                                         resolvingAgainstBaseURL: false) else { return }
-        comps.queryItems = [URLQueryItem(name: "maxWidth", value: "128")]
+        var items: [URLQueryItem] = [URLQueryItem(name: "maxWidth", value: "128")]
+        if force {
+            // Cache-bust: a unique query each foreground means we skip
+            // both ImageCache and any HTTP intermediate caches and pull
+            // whatever's currently on the Jellyfin server.
+            items.append(URLQueryItem(name: "t", value: String(Int(Date().timeIntervalSince1970))))
+        }
+        comps.queryItems = items
         guard let url = comps.url else { return }
         let img = await ImageCache.shared.load(
             url: url,
             headers: ["Authorization": auth.authHeader()])
-        await MainActor.run { self.avatar = img }
+        await MainActor.run { if img != nil || !force { self.avatar = img } }
     }
 
     private func open(pin: PinnedItem) {

@@ -44,6 +44,12 @@ struct MainWindow_Mac: View {
                     withAnimation(.easeInOut(duration: 0.25)) { immersive = false }
                 }
                 .transition(.opacity)
+                // Hide the toolbar + paint behind the title bar so the
+                // immersive player fills the whole window edge-to-edge
+                // instead of leaving the system "Bolera" title strip.
+                .toolbar(.hidden, for: .windowToolbar)
+                .toolbarBackground(.hidden, for: .windowToolbar)
+                .ignoresSafeArea()
             } else {
                 NavigationSplitView(columnVisibility: $columnVisibility) {
                     SidebarView_Mac(selection: sidebarSelectionBinding)
@@ -58,17 +64,17 @@ struct MainWindow_Mac: View {
                 }
                 .navigationSplitViewStyle(.balanced)
                 .transition(.opacity)
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    nav.selection = .search
-                } label: {
-                    Image(systemName: "magnifyingglass")
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            nav.selection = .search
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                        }
+                        .help("Search (⌘F)")
+                        .keyboardShortcut("f", modifiers: .command)
+                    }
                 }
-                .help("Search (⌘F)")
-                .keyboardShortcut("f", modifiers: .command)
             }
         }
     }
@@ -81,6 +87,8 @@ struct BottomPlayerBar_Mac: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var downloads: DownloadManager
     @EnvironmentObject var nav: MacNavCoordinator
+    @EnvironmentObject var ignored: IgnoredTracksStore
+    @EnvironmentObject var pro: ProEntitlementStore
     let onExpand: () -> Void
     @State private var artwork: PlatformImage?
     @State private var favOverride: Bool?
@@ -104,29 +112,33 @@ struct BottomPlayerBar_Mac: View {
     var body: some View {
         VStack(spacing: 0) {
             Divider()
-            HStack(spacing: 12) {
-                Button(action: onExpand) {
-                    artworkThumb
-                        .frame(width: 44, height: 44)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                }
-                .buttonStyle(.plain)
-                .help("Open Now Playing")
-                .disabled(player.current == nil)
-                Button(action: onExpand) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(player.current?.Name ?? "Nothing Playing")
-                            .font(.subheadline).lineLimit(1)
-                        Text(player.current?.primaryArtistName ?? "—")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            VStack(spacing: 6) {
+                // Top row: artwork + meta on the left, transport in the
+                // middle, secondary controls on the right.
+                HStack(spacing: 12) {
+                    Button(action: onExpand) {
+                        artworkThumb
+                            .frame(width: 40, height: 40)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
-                    .frame(maxWidth: 220, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .disabled(player.current == nil)
+                    .buttonStyle(.plain)
+                    .help("Open Now Playing")
+                    .disabled(player.current == nil)
+                    Button(action: onExpand) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(player.current?.Name ?? "Nothing Playing")
+                                .font(.subheadline).lineLimit(1)
+                            Text(player.current?.primaryArtistName ?? "—")
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(player.current == nil)
+                    .frame(width: 200, alignment: .leading)
 
-                VStack(spacing: 4) {
-                    HStack(spacing: 14) {
+                    Spacer()
+
+                    HStack(spacing: 16) {
                         transportButton("shuffle", active: player.shuffle) { player.toggleShuffle() }
                         Button { player.previous() } label: { Image(systemName: "backward.fill") }
                             .buttonStyle(.plain)
@@ -141,38 +153,48 @@ struct BottomPlayerBar_Mac: View {
                             player.cycleRepeatMode()
                         }
                     }
-                    scrubber
-                }
-                .frame(maxWidth: .infinity)
 
-                HStack(spacing: 14) {
-                    iconButton(isFavorite ? "heart.fill" : "heart",
-                               active: isFavorite,
-                               help: isFavorite ? "Remove from Favorites" : "Add to Favorites") {
-                        toggleFavorite()
+                    Spacer()
+
+                    HStack(spacing: 14) {
+                        iconButton(isFavorite ? "heart.fill" : "heart",
+                                   active: isFavorite,
+                                   help: isFavorite ? "Remove from Favorites" : "Add to Favorites") {
+                            toggleFavorite()
+                        }
+                        downloadButton
+                        if pro.isPro {
+                            iconButton("hand.raised.slash.fill",
+                                       help: "Skip & Ignore — never auto-play again") {
+                                skipAndIgnore()
+                            }
+                        }
+                        iconButton("list.bullet",
+                                   help: "Show Queue") {
+                            showQueue = true
+                        }
+                        Menu {
+                            playerContextMenu
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .foregroundStyle(.secondary)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .frame(width: 24)
+                        .help("More")
+                        iconButton("rectangle.expand.vertical",
+                                   help: "Open Now Playing (⌘⇧N)") {
+                            onExpand()
+                        }
+                        .keyboardShortcut("n", modifiers: [.command, .shift])
                     }
-                    downloadButton
-                    iconButton("list.bullet",
-                               help: "Show Queue") {
-                        showQueue = true
-                    }
-                    Menu {
-                        playerContextMenu
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .foregroundStyle(.secondary)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .frame(width: 24)
-                    .help("More")
-                    iconButton("rectangle.expand.vertical",
-                               help: "Open Now Playing (⌘⇧N)") {
-                        onExpand()
-                    }
-                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                    .disabled(player.current == nil)
+                    .frame(width: 200, alignment: .trailing)
                 }
-                .disabled(player.current == nil)
+
+                // Bottom row: full-width scrubber spans the entire bar.
+                scrubber
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -243,11 +265,25 @@ struct BottomPlayerBar_Mac: View {
                     Label("Download", systemImage: "arrow.down.circle")
                 }
             }
+            if pro.isPro {
+                Divider()
+                Button(role: .destructive) {
+                    skipAndIgnore()
+                } label: {
+                    Label("Skip & Ignore Track", systemImage: "hand.raised.slash.fill")
+                }
+            }
             Divider()
             Button {
                 showQueue = true
             } label: { Label("Show Queue", systemImage: "list.bullet") }
         }
+    }
+
+    private func skipAndIgnore() {
+        guard let cur = player.current else { return }
+        ignored.ignore(cur)
+        player.next()
     }
 
     private func iconButton(_ icon: String,
@@ -287,11 +323,11 @@ struct BottomPlayerBar_Mac: View {
     private var scrubber: some View {
         let safeDur = (player.duration.isFinite && player.duration > 0) ? player.duration : 1
         let safeCur = player.currentTime.isFinite ? player.currentTime : 0
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Text((isScrubbing ? scrub : safeCur).mmSS)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 38, alignment: .trailing)
+                .frame(width: 34, alignment: .trailing)
             Slider(value: Binding(
                 get: {
                     let raw = isScrubbing ? scrub : safeCur
@@ -316,7 +352,7 @@ struct BottomPlayerBar_Mac: View {
             Text(safeDur.mmSS)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 38, alignment: .leading)
+                .frame(width: 34, alignment: .leading)
         }
         .frame(maxWidth: .infinity)
     }

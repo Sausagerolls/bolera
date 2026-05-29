@@ -4,6 +4,7 @@ import BoleraCore
 struct PlaylistDetailView: View {
     let playlist: BaseItem
     @EnvironmentObject var auth: AuthManager
+    @ObservedObject private var downloads = DownloadManager.shared
     @State private var songs: [BaseItem] = []
 
     var body: some View {
@@ -60,6 +61,24 @@ struct PlaylistDetailView: View {
                 }
                 .padding(.horizontal)
 
+                Button {
+                    if isFullyDownloaded { removeDownload() } else { downloadPlaylist() }
+                } label: {
+                    VStack(spacing: 6) {
+                        Label(downloadLabel, systemImage: isFullyDownloaded ? "trash" : "arrow.down.circle")
+                            .foregroundStyle(isFullyDownloaded ? Color.red : Color.primary)
+                        if let p = downloadProgress {
+                            ProgressView(value: p).tint(.accentColor)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .disabled(songs.isEmpty || dlActive)
+                .padding(.horizontal)
+
                 Color.clear.frame(height: 120)
             }
         }
@@ -72,5 +91,37 @@ struct PlaylistDetailView: View {
         guard let url = auth.serverURL else { return }
         let client = JellyfinClient(baseURL: url, auth: auth)
         songs = (try? await client.playlistItems(playlist.Id)) ?? []
+    }
+
+    private var dlDoneCount: Int { songs.filter { downloads.completed.contains($0.Id) }.count }
+    private var dlActiveSongs: [BaseItem] { songs.filter { downloads.inProgress.keys.contains($0.Id) } }
+    private var dlActive: Bool { !dlActiveSongs.isEmpty }
+
+    /// Count-based (completed / total) so the bar only ever advances. A
+    /// byte-sum over the *active* downloads jitters: the active set churns as
+    /// tracks finish and others start at total=0, making the fraction
+    /// non-monotonic.
+    private var downloadProgress: Double? {
+        guard dlActive, !songs.isEmpty else { return nil }
+        return Double(dlDoneCount) / Double(songs.count)
+    }
+
+    private var isFullyDownloaded: Bool { !songs.isEmpty && dlDoneCount == songs.count }
+
+    private var downloadLabel: String {
+        if dlActive { return "Downloading \(dlDoneCount)/\(songs.count)" }
+        if isFullyDownloaded { return "Remove Download" }
+        if dlDoneCount > 0 { return "Download Rest (\(songs.count - dlDoneCount))" }
+        return "Download Playlist"
+    }
+
+    private func downloadPlaylist() {
+        guard let url = auth.serverURL, !songs.isEmpty else { return }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        DownloadManager.shared.downloadPlaylist(playlist, tracks: songs, using: client)
+    }
+
+    private func removeDownload() {
+        DownloadManager.shared.removeDownloadedPlaylist(playlist.Id)
     }
 }

@@ -20,6 +20,27 @@ public final class DownloadManager: NSObject, ObservableObject {
     @Published public private(set) var inProgress: [String: Progress] = [:]
     @Published public private(set) var completed: Set<String> = []
     @Published public private(set) var metadata: [String: BaseItem] = [:]
+    /// Track IDs downloaded individually (single-track download), as opposed to
+    /// arriving via a bulk album/artist "Download All". Legacy downloads that
+    /// predate this marker are absent here and treated as bulk — so they're
+    /// excluded from the individual-only "Tracks" list in CarPlay.
+    @Published public private(set) var individualDownloads: Set<String> = []
+
+    /// A playlist the user explicitly downloaded, with its ordered track ids so
+    /// it can be browsed/played offline. Bulk operation — member tracks are NOT
+    /// marked individual.
+    public struct DownloadedPlaylist: Codable, Sendable, Identifiable {
+        public let id: String
+        public let name: String
+        public let trackIds: [String]
+    }
+    @Published public private(set) var downloadedPlaylists: [String: DownloadedPlaylist] = [:]
+
+    /// Album ids the user downloaded as a whole (album "Download All", or via an
+    /// artist "Download All"). The Downloaded → Albums list shows only these, so
+    /// an album appears when it was deliberately downloaded — not when an odd
+    /// track from it happens to be saved individually.
+    @Published public private(set) var downloadedAlbums: Set<String> = []
 
     private var tasks: [String: URLSessionDownloadTask] = [:]
     private lazy var session: URLSession = {
@@ -36,6 +57,9 @@ public final class DownloadManager: NSObject, ObservableObject {
     }()
 
     private var metadataURL: URL { baseDir.appendingPathComponent("metadata.json") }
+    private var individualDownloadsURL: URL { baseDir.appendingPathComponent("individual_downloads.json") }
+    private var downloadedPlaylistsURL: URL { baseDir.appendingPathComponent("downloaded_playlists.json") }
+    private var downloadedAlbumsURL: URL { baseDir.appendingPathComponent("downloaded_albums.json") }
 
     public override init() {
         super.init()
@@ -51,7 +75,7 @@ public final class DownloadManager: NSObject, ObservableObject {
         return resolvedFileURL(for: itemId)
     }
 
-    public func download(_ item: BaseItem, using client: JellyfinClient) {
+    public func download(_ item: BaseItem, using client: JellyfinClient, individual: Bool = false) {
         guard !isDownloaded(item.Id), tasks[item.Id] == nil else { return }
         let url = client.audioStreamURL(for: item.Id)
         let task = session.downloadTask(with: url)
@@ -61,6 +85,10 @@ public final class DownloadManager: NSObject, ObservableObject {
             self.inProgress[item.Id] = Progress(received: 0, total: 0)
             self.metadata[item.Id] = item
             self.persistMetadata()
+            if individual {
+                self.individualDownloads.insert(item.Id)
+                self.persistIndividualDownloads()
+            }
         }
         // Enrich stored metadata with the full BaseItem (Genres, Overview,
         // etc.) — most list-fetching queries don't request these fields, so
@@ -72,6 +100,62 @@ public final class DownloadManager: NSObject, ObservableObject {
             }
         }
         task.resume()
+    }
+
+    /// Download every track of a playlist (bulk — NOT marked individual) and
+    /// record the playlist + its ordered track ids so it can be browsed and
+    /// played offline (e.g. CarPlay → Downloaded Music → Playlists). Calling
+    /// again refreshes the stored name/order even if all tracks already exist.
+    public func downloadPlaylist(_ playlist: BaseItem, tracks: [BaseItem], using client: JellyfinClient) {
+        let entry = DownloadedPlaylist(id: playlist.Id,
+                                       name: playlist.Name,
+                                       trackIds: tracks.map { $0.Id })
+        Task { @MainActor in
+            self.downloadedPlaylists[playlist.Id] = entry
+            self.persistDownloadedPlaylists()
+        }
+        for track in tracks where !isDownloaded(track.Id) {
+            download(track, using: client, individual: false)
+        }
+    }
+
+    /// Best-effort backfill of album provenance for downloads made before album
+    /// tracking existed (or via paths that don't record it). For each album that
+    /// has downloaded tracks but isn't yet marked whole-downloaded, fetch its
+    /// full track list and record it only if EVERY track is on disk — so partial
+    /// (odd-track) downloads stay out of the Albums list. Requires network; a
+    /// no-op offline.
+    public func backfillDownloadedAlbums(using client: JellyfinClient) async {
+        let (candidates, have): (Set<String>, Set<String>) = await MainActor.run {
+            var ids = Set<String>()
+            for id in completed {
+                if let aid = metadata[id]?.AlbumId, !aid.isEmpty, !downloadedAlbums.contains(aid) {
+                    ids.insert(aid)
+                }
+            }
+            return (ids, completed)
+        }
+        guard !candidates.isEmpty else { return }
+        for albumId in candidates {
+            guard let tracks = try? await client.songs(parentId: albumId), !tracks.isEmpty else { continue }
+            guard tracks.allSatisfy({ have.contains($0.Id) }) else { continue }
+            await MainActor.run {
+                self.downloadedAlbums.insert(albumId)
+                self.persistDownloadedAlbums()
+            }
+        }
+    }
+
+    /// Record an album as downloaded-as-a-whole and download its tracks (bulk —
+    /// not individual). The Downloaded → Albums list keys off this set.
+    public func downloadAlbum(_ album: BaseItem, tracks: [BaseItem], using client: JellyfinClient) {
+        Task { @MainActor in
+            self.downloadedAlbums.insert(album.Id)
+            self.persistDownloadedAlbums()
+        }
+        for track in tracks where !isDownloaded(track.Id) {
+            download(track, using: client, individual: false)
+        }
     }
 
     /// Re-fetch full BaseItem for every downloaded track whose stored
@@ -103,7 +187,9 @@ public final class DownloadManager: NSObject, ObservableObject {
         Task { @MainActor in
             self.completed.remove(itemId)
             self.metadata.removeValue(forKey: itemId)
+            self.individualDownloads.remove(itemId)
             self.persistMetadata()
+            self.persistIndividualDownloads()
         }
     }
 
@@ -116,7 +202,33 @@ public final class DownloadManager: NSObject, ObservableObject {
         Task { @MainActor in
             self.completed.removeAll()
             self.metadata.removeAll()
+            self.individualDownloads.removeAll()
+            self.downloadedPlaylists.removeAll()
+            self.downloadedAlbums.removeAll()
             self.persistMetadata()
+            self.persistIndividualDownloads()
+            self.persistDownloadedPlaylists()
+            self.persistDownloadedAlbums()
+        }
+    }
+
+    /// Remove a downloaded playlist: drop the playlist record and delete its
+    /// track files — but KEEP any track that's still referenced by an
+    /// individual download or by another downloaded playlist, so unrelated
+    /// downloads aren't collaterally removed.
+    public func removeDownloadedPlaylist(_ playlistId: String) {
+        guard let p = downloadedPlaylists[playlistId] else { return }
+        let keep = individualDownloads.union(
+            downloadedPlaylists.values
+                .filter { $0.id != playlistId }
+                .flatMap { $0.trackIds }
+        )
+        for tid in p.trackIds where !keep.contains(tid) {
+            delete(tid)
+        }
+        Task { @MainActor in
+            self.downloadedPlaylists.removeValue(forKey: playlistId)
+            self.persistDownloadedPlaylists()
         }
     }
 
@@ -129,6 +241,112 @@ public final class DownloadManager: NSObject, ObservableObject {
             sum += size
         }
         return sum
+    }
+
+    // MARK: - Downloaded content accessors (CarPlay)
+    //
+    // These return real stored track `BaseItem`s (or one representative track
+    // per artist/album), so callers reuse the same artwork / row helpers they
+    // use for live library data — no synthetic objects needed.
+
+    /// One representative downloaded track per artist, sorted by artist name.
+    public func downloadedArtistReps() -> [BaseItem] {
+        var byArtist: [String: BaseItem] = [:]
+        for id in completed {
+            guard let t = metadata[id] else { continue }
+            let name = t.primaryArtistName
+            guard !name.isEmpty, byArtist[name] == nil else { continue }
+            byArtist[name] = t
+        }
+        return byArtist.values.sorted {
+            $0.primaryArtistName.localizedCaseInsensitiveCompare($1.primaryArtistName) == .orderedAscending
+        }
+    }
+
+    /// One representative downloaded track per album (keyed by AlbumId), sorted by
+    /// album name. Only albums downloaded as a whole (in `downloadedAlbums`) — not
+    /// albums where just an odd track is downloaded individually.
+    public func downloadedAlbumReps() -> [BaseItem] {
+        var byAlbum: [String: BaseItem] = [:]
+        for id in completed {
+            guard let t = metadata[id], let albumId = t.AlbumId, !albumId.isEmpty,
+                  downloadedAlbums.contains(albumId) else { continue }
+            if byAlbum[albumId] == nil { byAlbum[albumId] = t }
+        }
+        return byAlbum.values.sorted {
+            ($0.Album ?? $0.Name).localizedCaseInsensitiveCompare($1.Album ?? $1.Name) == .orderedAscending
+        }
+    }
+
+    /// One representative downloaded track per album for a single artist — again
+    /// only fully-downloaded albums.
+    public func downloadedAlbumReps(forArtist artistName: String) -> [BaseItem] {
+        var byAlbum: [String: BaseItem] = [:]
+        for id in completed {
+            guard let t = metadata[id], t.primaryArtistName == artistName,
+                  let albumId = t.AlbumId, !albumId.isEmpty,
+                  downloadedAlbums.contains(albumId) else { continue }
+            if byAlbum[albumId] == nil { byAlbum[albumId] = t }
+        }
+        return byAlbum.values.sorted {
+            ($0.Album ?? $0.Name).localizedCaseInsensitiveCompare($1.Album ?? $1.Name) == .orderedAscending
+        }
+    }
+
+    /// Downloaded tracks for an artist, ordered album → disc → track for sensible queue playback.
+    public func downloadedTracks(forArtist artistName: String) -> [BaseItem] {
+        completed.compactMap { metadata[$0] }
+            .filter { $0.primaryArtistName == artistName }
+            .sorted {
+                ($0.Album ?? "", $0.ParentIndexNumber ?? 0, $0.IndexNumber ?? 0)
+                    < ($1.Album ?? "", $1.ParentIndexNumber ?? 0, $1.IndexNumber ?? 0)
+            }
+    }
+
+    /// Downloaded tracks for an artist that are NOT part of a fully-downloaded
+    /// album — the "odd" tracks (individual single downloads, playlist tracks).
+    /// Album-whole tracks are reachable via the artist's downloaded albums.
+    public func looseDownloadedTracks(forArtist artistName: String) -> [BaseItem] {
+        completed.compactMap { metadata[$0] }
+            .filter { t in
+                t.primaryArtistName == artistName &&
+                !(t.AlbumId.map { downloadedAlbums.contains($0) } ?? false)
+            }
+            .sorted {
+                ($0.Album ?? "", $0.IndexNumber ?? 0) < ($1.Album ?? "", $1.IndexNumber ?? 0)
+            }
+    }
+
+    /// Downloaded tracks for one album (by AlbumId), in disc/track order.
+    public func downloadedTracks(forAlbumId albumId: String) -> [BaseItem] {
+        completed.compactMap { metadata[$0] }
+            .filter { $0.AlbumId == albumId }
+            .sorted {
+                ($0.ParentIndexNumber ?? 0, $0.IndexNumber ?? 0)
+                    < ($1.ParentIndexNumber ?? 0, $1.IndexNumber ?? 0)
+            }
+    }
+
+    /// ONLY individually-downloaded tracks (excludes bulk album/artist downloads).
+    public func individuallyDownloadedTracks() -> [BaseItem] {
+        individualDownloads.compactMap { metadata[$0] }
+            .sorted {
+                ($0.primaryArtistName, $0.Album ?? "", $0.IndexNumber ?? 0)
+                    < ($1.primaryArtistName, $1.Album ?? "", $1.IndexNumber ?? 0)
+            }
+    }
+
+    /// Downloaded playlists that still have at least one downloaded track, by name.
+    public func downloadedPlaylistList() -> [DownloadedPlaylist] {
+        downloadedPlaylists.values
+            .filter { p in p.trackIds.contains { completed.contains($0) } }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Downloaded tracks for a playlist, in playlist order, filtered to what's still on disk.
+    public func downloadedTracks(forPlaylist playlistId: String) -> [BaseItem] {
+        guard let p = downloadedPlaylists[playlistId] else { return [] }
+        return p.trackIds.compactMap { completed.contains($0) ? metadata[$0] : nil }
     }
 
     // MARK: - Internals
@@ -228,12 +446,45 @@ public final class DownloadManager: NSObject, ObservableObject {
            let saved = try? JSONDecoder().decode([String: BaseItem].self, from: data) {
             metadata = saved.filter { completed.contains($0.key) }
         }
+        if let data = try? Data(contentsOf: individualDownloadsURL),
+           let saved = try? JSONDecoder().decode([String].self, from: data) {
+            individualDownloads = Set(saved.filter { completed.contains($0) })
+        }
+        if let data = try? Data(contentsOf: downloadedPlaylistsURL),
+           let saved = try? JSONDecoder().decode([String: DownloadedPlaylist].self, from: data) {
+            downloadedPlaylists = saved
+        }
+        if let data = try? Data(contentsOf: downloadedAlbumsURL),
+           let saved = try? JSONDecoder().decode([String].self, from: data) {
+            downloadedAlbums = Set(saved)
+        }
     }
 
     @MainActor
     private func persistMetadata() {
         if let data = try? JSONEncoder().encode(metadata) {
             try? data.write(to: metadataURL)
+        }
+    }
+
+    @MainActor
+    private func persistIndividualDownloads() {
+        if let data = try? JSONEncoder().encode(Array(individualDownloads)) {
+            try? data.write(to: individualDownloadsURL)
+        }
+    }
+
+    @MainActor
+    private func persistDownloadedPlaylists() {
+        if let data = try? JSONEncoder().encode(downloadedPlaylists) {
+            try? data.write(to: downloadedPlaylistsURL)
+        }
+    }
+
+    @MainActor
+    private func persistDownloadedAlbums() {
+        if let data = try? JSONEncoder().encode(Array(downloadedAlbums)) {
+            try? data.write(to: downloadedAlbumsURL)
         }
     }
 }

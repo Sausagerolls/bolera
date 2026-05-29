@@ -92,6 +92,32 @@ public final class AudioProcessor: ObservableObject {
 
     @Published public private(set) var levels: [Float] = Array(repeating: 0, count: 8)
 
+    /// Visualizer views call `startObservingLevels` on appear so the
+    /// audio render thread only pushes level updates to the main runloop
+    /// while someone is actually watching them. Otherwise the audio
+    /// callback fires ~43×/sec, queueing main-thread blocks that
+    /// compete with SwiftUI scroll handling and cause visible jitter.
+    private var levelsObserverCount: Int = 0
+
+    /// Throttle for level publishes — never push more than once every
+    /// ~33ms (30fps). The audio callback fires per buffer (~43Hz at
+    /// 1024-sample buffers @ 44.1kHz); without coalescing each tick
+    /// posted a dispatch_async to main, flooding the runloop.
+    private var lastLevelsPublishAt: CFTimeInterval = 0
+    private static let minLevelsInterval: CFTimeInterval = 1.0 / 30.0
+
+    public func startObservingLevels() {
+        stateLock.lock()
+        levelsObserverCount += 1
+        stateLock.unlock()
+    }
+
+    public func stopObservingLevels() {
+        stateLock.lock()
+        levelsObserverCount = max(0, levelsObserverCount - 1)
+        stateLock.unlock()
+    }
+
     private var biquadL: [BiquadFilter] = []
     private var biquadR: [BiquadFilter] = []
     private var sampleRate: Double = 44100
@@ -188,10 +214,54 @@ public final class AudioProcessor: ObservableObject {
         for i in 0..<filters.count {
             filters[i].process(samples: samples, count: count)
         }
+        // Pre-attenuate by the headroom we reserved for the biggest band
+        // boost — keeps the chain from pushing peaks past 0 dBFS on
+        // high-intensity content. Then a soft-knee limiter catches any
+        // remaining transients before they clip the DAC.
+        var gain = postGainFactor
+        if gain != 1.0 {
+            vDSP_vsmul(samples, 1, &gain, samples, 1, vDSP_Length(count))
+        }
+        softClip(samples: samples, count: count)
+    }
+
+    /// Single-band peak compensation: any positive band boost steals an
+    /// equivalent (slightly attenuated) chunk of headroom from the
+    /// post-chain output. Avoids the "bottoming out" / muddy clipping
+    /// users hear at high intensity when bands are pushed hot.
+    private var postGainFactor: Float = 1.0
+
+    private func recomputeHeadroom() {
+        // Sum a fraction of every positive band's gain so combined
+        // boosts (e.g. Bass Boost or Loudness presets) get more
+        // attenuation than a single +3 dB tweak. Cap so flat or
+        // negative-gain configs incur zero attenuation.
+        let positives = bands.map { max(0, $0.gain) }
+        let weighted = positives.reduce(0) { $0 + $1 * 0.45 }
+        let attenDb = -min(weighted, 14)
+        postGainFactor = pow(10, attenDb / 20)
+    }
+
+    /// Soft-knee tanh limiter applied after the biquad chain. Anything
+    /// above the threshold gets compressed toward ±1.0 along a smooth
+    /// curve instead of hard clipping.
+    private func softClip(samples: UnsafeMutablePointer<Float>, count: Int) {
+        let threshold: Float = 0.92
+        let limit: Float = 1.0 - threshold
+        for i in 0..<count {
+            let s = samples[i]
+            let absS = s < 0 ? -s : s
+            if absS > threshold {
+                let over = absS - threshold
+                let soft = threshold + limit * tanh(over / limit)
+                samples[i] = s >= 0 ? soft : -soft
+            }
+        }
     }
 
     /// Peaking-EQ biquad coefficients per band. Called under stateLock.
     private func recomputeCoefficients() {
+        recomputeHeadroom()
         guard !biquadL.isEmpty, biquadL.count == bands.count else { return }
         let Fs = Float(sampleRate)
         for (i, band) in bands.enumerated() {
@@ -215,22 +285,58 @@ public final class AudioProcessor: ObservableObject {
     // MARK: - Levels (for visualizer)
 
     private var smoothed: [Float] = Array(repeating: 0, count: 8)
+    /// Decaying peak of recent per-bin RMS. The visualizer normalizes
+    /// each bin against this so loud tracks stop pinning the bars at
+    /// the top (the user-visible "bottoming out") while quiet passages
+    /// still drive bars to the ceiling. Fast attack, slow release.
+    private var peakRef: Float = 0.10
 
     private func publishLevels(buffers: UnsafeMutableAudioBufferListPointer, frames: Int) {
         guard frames > 0, let ptr = buffers[0].mData?.assumingMemoryBound(to: Float.self) else { return }
         let bins = 8
         let chunk = max(1, frames / bins)
         var bin: [Float] = Array(repeating: 0, count: bins)
+        var framePeak: Float = 0
         for b in 0..<bins {
             let start = b * chunk
             let end = min(start + chunk, frames)
             var rms: Float = 0
             vDSP_rmsqv(ptr + start, 1, &rms, vDSP_Length(end - start))
-            bin[b] = min(1, rms * 4)
+            bin[b] = rms
+            if rms > framePeak { framePeak = rms }
+        }
+        // Track rolling peak: jump up instantly when the track gets
+        // louder, decay slowly so the bars settle back to fill the
+        // dynamic range during quieter passages.
+        if framePeak > peakRef {
+            peakRef = framePeak
+        } else {
+            peakRef = peakRef * 0.992 + framePeak * 0.008
+        }
+        let denom = max(0.04, peakRef)
+        for b in 0..<bins {
+            // Normalize against the rolling peak with a small ceiling
+            // buffer so the loudest bin tops out around 0.92 rather
+            // than slamming the 1.0 cap.
+            bin[b] = min(1, (bin[b] / denom) * 0.92)
         }
         for i in 0..<bins {
             smoothed[i] = smoothed[i] * 0.6 + bin[i] * 0.4
         }
+        // Skip the main-thread hop entirely when no visualizer view is
+        // currently subscribed AND throttle to 30fps when one is. Either
+        // gate alone would help; both together keep the audio callback
+        // from dispatching to main when it would be wasted work or
+        // out-pace the screen.
+        stateLock.lock()
+        let observed = levelsObserverCount > 0
+        stateLock.unlock()
+        guard observed else { return }
+
+        let now = CACurrentMediaTime()
+        guard now - lastLevelsPublishAt >= Self.minLevelsInterval else { return }
+        lastLevelsPublishAt = now
+
         let toPublish = smoothed
         DispatchQueue.main.async { [weak self] in
             self?.levels = toPublish

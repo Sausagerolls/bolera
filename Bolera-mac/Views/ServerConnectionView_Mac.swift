@@ -17,8 +17,10 @@ struct ServerConnectionView_Mac: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 22) {
-                Image(systemName: "waveform.circle.fill")
-                    .font(.system(size: 64)).foregroundStyle(.tint)
+                Image("BoleraGlyph")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 96, height: 96)
                 Text("Bolera").font(.system(size: 36, weight: .heavy))
                 Text("Sign in to your Jellyfin server").foregroundStyle(.secondary)
 
@@ -57,7 +59,7 @@ struct ServerConnectionView_Mac: View {
     }
 
     private var canSubmit: Bool {
-        URL(string: server) != nil && !username.isEmpty && !password.isEmpty
+        URL(string: server) != nil && !username.isEmpty
     }
 
     private func signIn() {
@@ -100,9 +102,10 @@ struct LastFmOnboardingView_Mac: View {
                 VStack(spacing: 28) {
                     Spacer().frame(height: 50)
                     VStack(spacing: 10) {
-                        Image(systemName: "waveform.path.ecg.rectangle.fill")
-                            .font(.system(size: 60))
-                            .foregroundStyle(.tint)
+                        Image("BoleraGlyph")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 84, height: 84)
                         Text("Connect Last.fm")
                             .font(.system(size: 30, weight: .heavy))
                         Text("Optional, but it makes Bolera better.")
@@ -117,8 +120,8 @@ struct LastFmOnboardingView_Mac: View {
                                        title: "Artist Bios",
                                        subtitle: "Background info on every artist page.")
                         FeatureRow_Mac(icon: "wand.and.stars",
-                                       title: "Smarter Daily Mixes",
-                                       subtitle: "Playlists informed by similar artists.")
+                                       title: "Better AI + Daily Mixes",
+                                       subtitle: "The Make-a-Mix generator and daily playlists are dramatically richer with Last.fm tag data.")
                         FeatureRow_Mac(icon: "antenna.radiowaves.left.and.right",
                                        title: "Optional Scrobbling",
                                        subtitle: "Build your listening history on last.fm.")
@@ -144,7 +147,7 @@ struct LastFmOnboardingView_Mac: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                        .disabled(signingIn || username.isEmpty || password.isEmpty)
+                        .disabled(signingIn || username.isEmpty)
 
                         Button("Skip for now", action: onFinish)
                             .buttonStyle(.plain)

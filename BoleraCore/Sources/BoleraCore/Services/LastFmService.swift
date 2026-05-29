@@ -200,6 +200,46 @@ public final class LastFmService: ObservableObject {
         return wrapped.topartists.artist
     }
 
+    // MARK: - Top tracks for a tag (tag.getTopTracks)
+
+    public struct TagTrack: Codable, Hashable, Identifiable, Sendable {
+        public struct Artist: Codable, Hashable, Sendable {
+            public let name: String
+        }
+        public let name: String
+        public let artist: Artist
+        public var id: String { "\(artist.name.lowercased())|\(name.lowercased())" }
+    }
+
+    /// Returns the most popular tracks tagged with `tag` worldwide. Use to
+    /// expand mood tags (e.g. "chill", "morning") into concrete track names
+    /// you can then match against the user's library by title + artist.
+    public func topTracks(forTag tag: String, limit: Int = 50) async throws -> [TagTrack] {
+        guard hasAppCredentials else {
+            throw LastFmError.message("Last.fm not configured")
+        }
+        var comps = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "method", value: "tag.gettoptracks"),
+            URLQueryItem(name: "tag", value: tag),
+            URLQueryItem(name: "api_key", value: effectiveAPIKey),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "format", value: "json")
+        ]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "GET"
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw LastFmError.message("Last.fm HTTP error")
+        }
+        struct Wrapper: Decodable {
+            struct Top: Decodable { let track: [TagTrack] }
+            let tracks: Top
+        }
+        let wrapped = try JSONDecoder().decode(Wrapper.self, from: data)
+        return wrapped.tracks.track
+    }
+
     // MARK: - Top tracks (artist.getTopTracks)
 
     public struct TopTrack: Codable, Hashable, Identifiable, Sendable {
@@ -239,6 +279,47 @@ public final class LastFmService: ObservableObject {
         }
         let wrapped = try JSONDecoder().decode(Wrapper.self, from: data)
         return wrapped.toptracks.track
+    }
+
+    // MARK: - Similar tracks (track.getSimilar)
+
+    public struct SimilarTrack: Codable, Hashable, Sendable {
+        public struct Artist: Codable, Hashable, Sendable { public let name: String }
+        public let name: String
+        public let artist: Artist
+    }
+
+    /// Last.fm's track-level "sounds-like" recommendations for a specific
+    /// (artist, track). This is the strongest radio signal — far better than
+    /// artist/genre similarity for a coherent mix — because it's derived from
+    /// real co-listening data. Read-only; only needs an API key. Returns []
+    /// (not an error) when Last.fm has no matches for the seed.
+    public func similarTracks(artist: String, track: String, limit: Int = 50) async throws -> [SimilarTrack] {
+        guard hasAppCredentials else { throw LastFmError.message("Last.fm not configured") }
+        var comps = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "method", value: "track.getsimilar"),
+            URLQueryItem(name: "artist", value: artist),
+            URLQueryItem(name: "track", value: track),
+            URLQueryItem(name: "api_key", value: effectiveAPIKey),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "format", value: "json"),
+            URLQueryItem(name: "autocorrect", value: "1")
+        ]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "GET"
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw LastFmError.message("Last.fm HTTP error")
+        }
+        struct Wrapper: Decodable {
+            struct Similar: Decodable { let track: [SimilarTrack]? }
+            let similartracks: Similar?
+        }
+        // track.getsimilar returns an empty/object-less `similartracks` when
+        // there are no matches, so decode leniently and default to [].
+        let wrapped = try? JSONDecoder().decode(Wrapper.self, from: data)
+        return wrapped?.similartracks?.track ?? []
     }
 
     // MARK: - Artist info / bio (artist.getInfo)

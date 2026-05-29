@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bolera — Privacy Policy</title>
+<meta name="description" content="Bolera privacy policy. Bolera does not collect personal data." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css?v=2" />
+<link rel="icon" type="image/png" sizes="32x32" href="favicon_32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="favicon_16.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="favicon_180.png" />
+<meta name="theme-color" content="#0d0a23" />
+</head>
+<body>
+
+<div class="bg-grid"></div>
+<div class="bg-glow glow-a"></div>
+<div class="bg-glow glow-b"></div>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/bolera/">
+      <span class="brand-mark">
+        <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
+          <defs>
+            <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#a47cff"/>
+              <stop offset="100%" stop-color="#5a8cff"/>
+            </linearGradient>
+          </defs>
+          <path d="M5 16 Q5 7 16 7 Q27 7 27 16 Q27 25 16 25 Q5 25 5 16 Z" fill="none" stroke="url(#g1)" stroke-width="2.5"/>
+          <path d="M10 16 L13 12 L16 20 L19 10 L22 16" fill="none" stroke="url(#g1)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      Bolera
+    </a>
+    <nav class="nav-links">
+      <a href="/bolera/#features">Features</a>
+      <a href="/bolera/#pro">Pro</a>
+      <a href="/bolera/#contact">Contact</a>
+    </nav>
+    <a class="studio-link" href="/">Giant Mushroom Studio <span aria-hidden="true">↗</span></a>
+  </div>
+</header>
+
+<main class="legal">
+  <article class="legal-card">
+    <span class="eyebrow"><span class="eyebrow-dot"></span> Legal</span>
+    <h1>Privacy Policy</h1>
+    <p class="meta">Last updated: 28 May 2026</p>
+
+    <p class="lede">
+      Bolera is a music player that talks to <em>your</em> Jellyfin server. It
+      doesn't have a backend, doesn't have an account system, and doesn't
+      collect personal data. The short version: nothing about you goes
+      anywhere except the services you've explicitly signed in to.
+    </p>
+
+    <h2>What we collect</h2>
+    <p><strong>Nothing.</strong> Bolera has no servers and no analytics. We don't track usage, opens, crashes, IPs, identifiers, or anything else.</p>
+
+    <h2>What stays on your device</h2>
+    <ul>
+      <li>Your Jellyfin server URL, username, and access token (stored in the iOS/macOS Keychain)</li>
+      <li>Your downloaded tracks (in the app's local file storage)</li>
+      <li>Your settings: EQ curve, library visibility toggles, ignored items, sidebar pins, recently-played caches</li>
+      <li>Your Last.fm session key, if you sign in (also stored in the Keychain)</li>
+    </ul>
+
+    <h2>What's synced via iCloud</h2>
+    <p>
+      If you're signed in to iCloud and Bolera Pro is unlocked, a small set of
+      settings sync across your devices through Apple's iCloud Key-Value
+      Storage: your EQ curve, library visibility toggles, ignored
+      tracks/artists/albums, and pinned items. Apple manages this storage
+      end-to-end; we never see it.
+    </p>
+
+    <h2>What goes to your Jellyfin server</h2>
+    <p>
+      Bolera communicates with the Jellyfin server <em>you</em> sign in to.
+      That includes browsing requests, playback reporting (now-playing /
+      progress / stopped — standard Jellyfin behavior), favorite toggles,
+      and audio streaming. No copy of these requests touches us; they go
+      device → your server.
+    </p>
+
+    <h2>What goes to Last.fm (optional)</h2>
+    <p>
+      If you sign in to Last.fm in Settings, Bolera makes requests to the
+      Last.fm API on your behalf for:
+    </p>
+    <ul>
+      <li>Looking up similar artists and bios for the artist detail page</li>
+      <li>Fetching top-track / tag data used by Daily Mixes and Make-a-Mix</li>
+      <li>Scrobbling plays, only when the "Scrobble plays" toggle is on</li>
+    </ul>
+    <p>
+      Your Last.fm username and session key go between your device and
+      Last.fm directly. We never proxy or store them. You can sign out at
+      any time from Settings → Last.fm.
+    </p>
+
+    <h2>In-App Purchases</h2>
+    <p>
+      Bolera Pro is a one-time purchase processed by Apple's StoreKit. Apple
+      handles the transaction, billing, and refunds; we receive only the
+      anonymous purchase receipt your device passes to the app at runtime.
+      We never see your Apple ID, card details, or address.
+    </p>
+
+    <h2>Apple Intelligence (on-device only)</h2>
+    <p>
+      The Make-a-Mix feature uses Apple's on-device Foundation Models
+      framework. Your prompts are processed locally by the model that ships
+      with the OS — nothing leaves your device for this step. Bolera then
+      uses the model's tag suggestions to query Jellyfin and (optionally)
+      Last.fm as described above.
+    </p>
+
+    <h2>Children</h2>
+    <p>Bolera is not directed at children under 13.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If we change anything material, we'll update the "Last updated" date and post the new version on this page.</p>
+
+    <h2>Contact</h2>
+    <p>
+      Questions? Email <a href="mailto:contact@giantmushroom.studio">contact@giantmushroom.studio</a>.
+    </p>
+  </article>
+</main>
+
+<footer class="foot">
+  <div class="foot-bottom">© <span id="year"></span> Giant Mushroom Studios. Jellyfin is a trademark of its owners.</div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

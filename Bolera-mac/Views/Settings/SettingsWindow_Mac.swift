@@ -106,6 +106,7 @@ private struct LastFmSettings_Mac: View {
 
 private struct GeneralSettings_Mac: View {
     @EnvironmentObject var auth: AuthManager
+    @ObservedObject private var prefetcher = LibraryPrefetcher.shared
     @AppStorage("bolera.maxBitrate") private var maxBitrate: Int = 320
 
     var body: some View {
@@ -118,6 +119,27 @@ private struct GeneralSettings_Mac: View {
                     LabeledContent("Server", value: url.host ?? url.absoluteString)
                 }
                 Button("Sign Out", role: .destructive) { auth.logout() }
+            }
+            Section("Library") {
+                if prefetcher.isRunning {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(prefetcher.phase.isEmpty ? "Updating…" : prefetcher.phase,
+                              systemImage: "arrow.triangle.2.circlepath")
+                        ProgressView(value: prefetcher.progress).tint(.accentColor)
+                    }
+                } else {
+                    Button {
+                        guard let url = auth.serverURL else { return }
+                        Task { await prefetcher.run(client: JellyfinClient(baseURL: url, auth: auth), auth: auth) }
+                    } label: {
+                        Label("Update Offline Cache", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(auth.serverURL == nil)
+                }
+                if let last = prefetcher.lastCompleted {
+                    LabeledContent("Last updated",
+                                   value: last.formatted(date: .abbreviated, time: .shortened))
+                }
             }
             Section("Streaming") {
                 Picker("Max Bitrate", selection: $maxBitrate) {

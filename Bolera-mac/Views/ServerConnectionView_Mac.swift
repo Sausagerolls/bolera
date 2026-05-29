@@ -8,6 +8,7 @@ struct ServerConnectionView_Mac: View {
     @State private var password: String = ""
     @State private var loading = false
     @State private var error: String?
+    @State private var signInTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -52,6 +53,12 @@ struct ServerConnectionView_Mac: View {
                 .controlSize(.large)
                 .disabled(loading || !canSubmit)
 
+                if loading {
+                    Button("Cancel") { cancelSignIn() }
+                        .controlSize(.large)
+                        .keyboardShortcut(.cancelAction)
+                }
+
                 Spacer()
             }
             .padding(40)
@@ -70,14 +77,25 @@ struct ServerConnectionView_Mac: View {
         }
         loading = true
         error = nil
-        Task {
+        signInTask = Task {
             do {
                 try await auth.login(server: url, username: username, password: password)
+            } catch is CancellationError {
+                // user cancelled — message set by cancelSignIn()
+            } catch let u as URLError where u.code == .cancelled {
+                // URLSession surfaced the cancel
             } catch {
                 await MainActor.run { self.error = error.localizedDescription }
             }
-            await MainActor.run { self.loading = false }
+            await MainActor.run { self.loading = false; self.signInTask = nil }
         }
+    }
+
+    private func cancelSignIn() {
+        signInTask?.cancel()
+        signInTask = nil
+        loading = false
+        error = "Sign in cancelled."
     }
 }
 

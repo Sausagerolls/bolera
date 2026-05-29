@@ -24,6 +24,7 @@ struct MainWindow_Mac: View {
     @State private var search: String = ""
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var immersive: Bool = false
+    @ObservedObject private var connectivity = ConnectivityStore.shared
 
     private var sidebarSelectionBinding: Binding<SidebarSelection?> {
         Binding(
@@ -77,6 +78,27 @@ struct MainWindow_Mac: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !connectivity.isOnline && !immersive {
+                OfflineBanner_Mac()
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: connectivity.isOnline)
+    }
+}
+
+struct OfflineBanner_Mac: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wifi.slash")
+            Text("Offline — reconnect to your server").lineLimit(1)
+            Spacer()
+        }
+        .font(.callout.weight(.medium))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(Color.orange.opacity(0.85))
     }
 }
 

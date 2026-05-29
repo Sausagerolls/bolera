@@ -37,27 +37,33 @@ private struct HomeContent_Mac: View {
     @EnvironmentObject var lastFm: LastFmService
     @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
     @State private var showMoodMix = false
+    @ObservedObject private var connectivity = ConnectivityStore.shared
+    @ObservedObject private var downloads = DownloadManager.shared
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                if moodMixEnabled {
-                    moodMixCard
-                }
-                if !daily.playlists.isEmpty || daily.isGenerating {
-                    dailySection
-                }
-                if !library.recentlyPlayed.isEmpty {
-                    section("Recently Played", items: library.recentlyPlayed)
-                }
-                if !library.recentlyAdded.isEmpty {
-                    section("Recently Added", items: library.recentlyAdded)
-                }
-                if !library.frequentAlbums.isEmpty {
-                    section("On Repeat", items: library.frequentAlbums)
-                }
-                if !library.favoriteAlbums.isEmpty {
-                    section("Favorites", items: library.favoriteAlbums)
+                if connectivity.isOnline {
+                    if moodMixEnabled {
+                        moodMixCard
+                    }
+                    if !daily.playlists.isEmpty || daily.isGenerating {
+                        dailySection
+                    }
+                    if !library.recentlyPlayed.isEmpty {
+                        section("Recently Played", items: library.recentlyPlayed)
+                    }
+                    if !library.recentlyAdded.isEmpty {
+                        section("Recently Added", items: library.recentlyAdded)
+                    }
+                    if !library.frequentAlbums.isEmpty {
+                        section("On Repeat", items: library.frequentAlbums)
+                    }
+                    if !library.favoriteAlbums.isEmpty {
+                        section("Favorites", items: library.favoriteAlbums)
+                    }
+                } else {
+                    offlineContent
                 }
             }
             .padding(20)
@@ -67,6 +73,14 @@ private struct HomeContent_Mac: View {
             let client = JellyfinClient(baseURL: url, auth: auth)
             await library.refresh(client: client)
             await daily.refreshIfNeeded(client: client, auth: auth, lastFm: lastFm)
+        }
+        .onReceive(connectivity.didReconnect) { _ in
+            Task {
+                guard let url = auth.serverURL else { return }
+                let client = JellyfinClient(baseURL: url, auth: auth)
+                await library.refresh(client: client)
+                await daily.refreshIfNeeded(client: client, auth: auth, lastFm: lastFm)
+            }
         }
         .sheet(isPresented: $showMoodMix) {
             MoodMixSheet_Mac()
@@ -148,6 +162,23 @@ private struct HomeContent_Mac: View {
         guard let url = auth.serverURL else { return }
         let client = JellyfinClient(baseURL: url, auth: auth)
         await daily.regenerate(client: client, auth: auth, lastFm: lastFm)
+    }
+
+    /// Downloaded-only content shown when the server is unreachable.
+    @ViewBuilder
+    private var offlineContent: some View {
+        let artists = downloads.downloadedArtistReps()
+        let albums  = downloads.downloadedAlbumReps()
+        let tracks  = downloads.individuallyDownloadedTracks()
+        if artists.isEmpty && albums.isEmpty && tracks.isEmpty {
+            ContentUnavailableView("You're Offline", systemImage: "wifi.slash",
+                description: Text("Download music while connected to listen offline."))
+                .frame(minHeight: 300)
+        } else {
+            if !albums.isEmpty  { section("Downloaded Albums",  items: albums) }
+            if !artists.isEmpty { section("Downloaded Artists", items: artists) }
+            if !tracks.isEmpty  { section("Downloaded Tracks",  items: tracks) }
+        }
     }
 
     private func section(_ title: String, items: [BaseItem]) -> some View {
@@ -1424,6 +1455,7 @@ private struct LibraryContent_Mac: View {
     @State private var albums: [BaseItem] = []
     @State private var artists: [BaseItem] = []
     @State private var loading = false
+    @ObservedObject private var connectivity = ConnectivityStore.shared
 
     enum BrowseMode: String, CaseIterable, Identifiable {
         case albums = "Albums"
@@ -1434,36 +1466,48 @@ private struct LibraryContent_Mac: View {
     let columns = [GridItem(.adaptive(minimum: 160), spacing: 16)]
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("View", selection: $mode) {
-                ForEach(BrowseMode.allCases) { m in
-                    Text(m.rawValue).tag(m)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 20)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
-            .frame(maxWidth: 360)
+        Group {
+            if connectivity.isOnline {
+                VStack(spacing: 0) {
+                    Picker("View", selection: $mode) {
+                        ForEach(BrowseMode.allCases) { m in
+                            Text(m.rawValue).tag(m)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: 360)
 
-            switch mode {
-            case .albums:
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 18) {
-                        ForEach(albums) { item in AlbumTile_Mac(item: item) }
+                    switch mode {
+                    case .albums:
+                        ScrollView {
+                            LazyVGrid(columns: columns, spacing: 18) {
+                                ForEach(albums) { item in AlbumTile_Mac(item: item) }
+                            }
+                            .padding(20)
+                        }
+                    case .artists:
+                        ScrollView {
+                            LazyVGrid(columns: columns, spacing: 18) {
+                                ForEach(artists) { artist in ArtistTile_Mac(item: artist) }
+                            }
+                            .padding(20)
+                        }
                     }
-                    .padding(20)
                 }
-            case .artists:
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 18) {
-                        ForEach(artists) { artist in ArtistTile_Mac(item: artist) }
-                    }
-                    .padding(20)
-                }
+            } else {
+                // Offline: server browse unavailable — show downloaded content.
+                DownloadsContent_Mac()
             }
         }
-        .task(id: libraryId) { await loadAll() }
+        .task(id: libraryId) {
+            if connectivity.isOnline { await loadAll() }
+        }
+        .onReceive(connectivity.didReconnect) { _ in
+            Task { await loadAll() }
+        }
     }
 
     private func loadAll() async {

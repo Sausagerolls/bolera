@@ -90,8 +90,16 @@ public final class AuthManager: ObservableObject {
         Keychain.delete("userId")
         Keychain.delete("userName")
         wipeServerScopedCaches()
-        // A full sign-out should clear linked accounts too, not just the
-        // Jellyfin session — drop the Last.fm session.
+        // A full sign-out clears linked accounts too. Clear the Last.fm
+        // session's PERSISTED state synchronously right here — so it can't
+        // survive a logout (or leak into a different account) even if the
+        // published-state update is deferred — then update the in-memory
+        // @Published state on the main actor for the live UI. Also reset the
+        // Last.fm onboarding flag so the next account is re-offered Last.fm.
+        Keychain.delete("lastfm.sessionKey")
+        UserDefaults.standard.removeObject(forKey: "lastfm.username")
+        UserDefaults.standard.removeObject(forKey: "lastfm.enabled")
+        UserDefaults.standard.removeObject(forKey: "bolera.onboarding.lastfmSeen")
         Task { @MainActor in LastFmService.shared.signOut() }
         // The library cache + artwork were just wiped, so the next login should
         // re-run the prefetch onboarding (and re-show the "Preparing your

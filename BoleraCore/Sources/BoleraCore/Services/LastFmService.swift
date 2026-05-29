@@ -81,8 +81,10 @@ public final class LastFmService: ObservableObject {
     public func signOut() {
         sessionKey = nil
         username = nil
+        enabled = false
         Keychain.delete("lastfm.sessionKey")
         UserDefaults.standard.removeObject(forKey: "lastfm.username")
+        UserDefaults.standard.removeObject(forKey: "lastfm.enabled")
     }
 
     public func updateNowPlaying(_ item: BaseItem) async {

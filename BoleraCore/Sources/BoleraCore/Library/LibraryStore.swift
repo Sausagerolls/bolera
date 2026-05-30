@@ -152,40 +152,130 @@ public final class ConnectivityStore: ObservableObject {
     /// Fires once each time we transition offline -> online.
     public var didReconnect: AnyPublisher<Void, Never> { reconnect.eraseToAnyPublisher() }
 
+    /// Re-probes the server while we believe we're offline, so we reconnect
+    /// automatically the moment it answers — without depending on the network
+    /// path flipping (it doesn't, when signal stays good). nil when online.
+    private var probeTask: Task<Void, Never>?
+    /// In-flight "is this failure real?" verification, so a burst of failing
+    /// requests triggers only one probe.
+    private var verifyTask: Task<Void, Never>?
+
     public init() {
         monitor.pathUpdateHandler = { [weak self] path in
             let satisfied = path.status == .satisfied
             Task { @MainActor in
                 guard let self else { return }
-                if satisfied, !self.isOnline {
-                    self.isOnline = true
-                    self.reconnect.send()
-                } else if !satisfied {
-                    self.isOnline = false
+                if !satisfied {
+                    // No usable interface at all — definitely offline.
+                    self.goOffline()
+                } else if !self.isOnline {
+                    // Interface came back; verify the server is actually
+                    // reachable rather than optimistically claiming online.
+                    self.startProbe(immediate: true)
                 }
             }
         }
         monitor.start(queue: queue)
+        NotificationCenter.default.addObserver(forName: Notification.Name("boleraDidLogout"),
+                                               object: nil, queue: nil) { [weak self] _ in
+            Task { @MainActor in self?.stopProbing() }
+        }
     }
 
     /// Call from any successful network request — the server is reachable.
     public func noteSuccess() {
+        stopProbing()
         if !isOnline {
             isOnline = true
             reconnect.send()
         }
     }
 
-    /// Call from a failed request. Only connectivity-class URLErrors flip us
-    /// offline; HTTP 4xx/5xx and decode errors mean the server IS reachable.
+    /// Call from a failed request. Only connectivity-class URLErrors are
+    /// candidates (HTTP 4xx/5xx and decode errors mean the server IS reachable).
+    /// A single failure does NOT drop us offline — a transient cellular blip or
+    /// one slow response shouldn't blank the app — instead we confirm with a
+    /// quick probe and only go offline if the server is genuinely unreachable.
     public func noteFailure(_ error: Error) {
-        guard let u = error as? URLError else { return }
+        guard Self.isConnectivityError(error), isOnline,
+              verifyTask == nil, probeTask == nil else { return }
+        let base = AuthManager.shared.serverURL
+        verifyTask = Task { [weak self] in
+            let reachable = await Self.serverReachable(base: base)
+            guard let self else { return }
+            self.verifyTask = nil
+            if !reachable { self.goOffline() }
+        }
+    }
+
+    /// Flip offline and start re-probing the server until it answers.
+    private func goOffline() {
+        if isOnline { isOnline = false }
+        startProbe(immediate: false)
+    }
+
+    /// Background loop that pings the server with backoff (3s → 30s) and flips
+    /// back online the instant it responds. Runs only while offline.
+    private func startProbe(immediate: Bool) {
+        guard probeTask == nil else { return }
+        verifyTask?.cancel(); verifyTask = nil
+        probeTask = Task { [weak self] in
+            var delayNs: UInt64 = immediate ? 0 : 3_000_000_000
+            while !Task.isCancelled {
+                if delayNs > 0 { try? await Task.sleep(nanoseconds: delayNs) }
+                if Task.isCancelled { return }
+                let base = self?.serverBase ?? nil
+                if await Self.serverReachable(base: base) {
+                    self?.recoverOnline()
+                    return
+                }
+                delayNs = min(delayNs == 0 ? 3_000_000_000 : delayNs * 2, 30_000_000_000)
+            }
+        }
+    }
+
+    private var serverBase: URL? { AuthManager.shared.serverURL }
+
+    private func recoverOnline() {
+        probeTask = nil
+        if !isOnline {
+            isOnline = true
+            reconnect.send()
+        }
+    }
+
+    private func stopProbing() {
+        probeTask?.cancel(); probeTask = nil
+        verifyTask?.cancel(); verifyTask = nil
+    }
+
+    private static func isConnectivityError(_ error: Error) -> Bool {
+        guard let u = error as? URLError else { return false }
         switch u.code {
         case .notConnectedToInternet, .timedOut, .cannotConnectToHost,
-             .networkConnectionLost, .cannotFindHost, .dataNotAllowed:
-            isOnline = false
+             .networkConnectionLost, .cannotFindHost, .dnsLookupFailed,
+             .dataNotAllowed, .internationalRoamingOff:
+            return true
         default:
-            break
+            return false
+        }
+    }
+
+    /// Lightweight, unauthenticated reachability check against Jellyfin's public
+    /// info endpoint. ANY HTTP response (even 401/404) means the server answered,
+    /// so it's reachable; only a transport error (timeout, cannot-connect) counts
+    /// as unreachable. NOTE: a LAN-only server (private 192.168.x.x address) is
+    /// genuinely unreachable over cellular — this correctly stays offline there.
+    static func serverReachable(base: URL?) async -> Bool {
+        guard let base else { return false }
+        var req = URLRequest(url: base.appendingPathComponent("System/Info/Public"))
+        req.timeoutInterval = 6
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            return resp is HTTPURLResponse
+        } catch {
+            return false
         }
     }
 }

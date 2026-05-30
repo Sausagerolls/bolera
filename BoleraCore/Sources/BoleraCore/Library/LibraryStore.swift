@@ -49,9 +49,10 @@ public final class LibraryCache: @unchecked Sendable {
 /// then refresh() fetches fresh data and overwrites the cache.
 @MainActor
 public final class LibraryStore: ObservableObject {
-    @Published public var recentlyAdded: [BaseItem] = []
-    @Published public var recentlyPlayed: [BaseItem] = []
-    @Published public var frequentAlbums: [BaseItem] = []
+    @Published public var recentlyAdded: [BaseItem] = []          // albums
+    @Published public var recentlyPlayed: [BaseItem] = []         // tracks ("Recent Tracks")
+    @Published public var recentlyPlayedAlbums: [BaseItem] = []   // albums ("Recent Albums")
+    @Published public var topPlayedTracks: [BaseItem] = []        // tracks ("Top Played Tracks")
     @Published public var favoriteAlbums: [BaseItem] = []
     @Published public var lastError: String?
 
@@ -62,33 +63,37 @@ public final class LibraryStore: ObservableObject {
     private func loadCached() {
         recentlyAdded = LibraryCache.shared.read("home.recentlyAdded", as: [BaseItem].self) ?? []
         recentlyPlayed = LibraryCache.shared.read("home.recentlyPlayed", as: [BaseItem].self) ?? []
-        frequentAlbums = LibraryCache.shared.read("home.frequentAlbums", as: [BaseItem].self) ?? []
+        recentlyPlayedAlbums = LibraryCache.shared.read("home.recentlyPlayedAlbums", as: [BaseItem].self) ?? []
+        topPlayedTracks = LibraryCache.shared.read("home.topPlayedTracks", as: [BaseItem].self) ?? []
         favoriteAlbums = LibraryCache.shared.read("home.favoriteAlbums", as: [BaseItem].self) ?? []
     }
 
     public func refresh(client: JellyfinClient) async {
         async let added = client.recentlyAdded()
-        async let played = client.recentlyPlayed()
-        async let freq = client.frequentlyPlayed()
+        async let playedTracks = client.recentlyPlayed(limit: 60)
+        async let topTracks = client.topPlayedTracks()
         async let favs = client.favorites(type: "MusicAlbum")
         do {
-            let (a, p, f, fav) = try await (added, played, freq, favs)
+            let (a, pt, tt, fav) = try await (added, playedTracks, topTracks, favs)
             let visibility = LibraryVisibilityStore.shared
             let ignored = IgnoredTracksStore.shared
-            let aF = ignored.filter(visibility.filter(a))
-            let pF = ignored.filter(visibility.filter(p))
-            let fF = visibility.filter(f)
-            let favF = visibility.filter(fav)
-            recentlyAdded = aF
-            recentlyPlayed = pF
-            frequentAlbums = fF
-            favoriteAlbums = favF
+            // "Recent Albums" = the distinct albums of recently-played tracks.
+            // Jellyfin doesn't reliably flag the albums themselves as played, so
+            // a MusicAlbum+IsPlayed query comes back empty — derive instead.
+            let recentAlbums = Self.distinctAlbums(from: pt)
+            // Albums get the visibility filter; track lists also get the ignore filter.
+            recentlyAdded = visibility.filter(a)
+            recentlyPlayed = Array(ignored.filter(visibility.filter(pt)).prefix(24))
+            recentlyPlayedAlbums = recentAlbums
+            topPlayedTracks = ignored.filter(visibility.filter(tt))
+            favoriteAlbums = visibility.filter(fav)
             lastError = nil
             // Cache the unfiltered server response so toggling visibility/ignore
             // shows the right state next launch.
             LibraryCache.shared.write("home.recentlyAdded", value: a)
-            LibraryCache.shared.write("home.recentlyPlayed", value: p)
-            LibraryCache.shared.write("home.frequentAlbums", value: f)
+            LibraryCache.shared.write("home.recentlyPlayed", value: pt)
+            LibraryCache.shared.write("home.recentlyPlayedAlbums", value: recentAlbums)
+            LibraryCache.shared.write("home.topPlayedTracks", value: tt)
             LibraryCache.shared.write("home.favoriteAlbums", value: fav)
         } catch is CancellationError {
             // Refresh superseded — keep prior state.
@@ -105,14 +110,27 @@ public final class LibraryStore: ObservableObject {
     public func reapplyFilters() {
         let visibility = LibraryVisibilityStore.shared
         let ignored = IgnoredTracksStore.shared
-        let cachedAdded = LibraryCache.shared.read("home.recentlyAdded", as: [BaseItem].self) ?? []
-        let cachedPlayed = LibraryCache.shared.read("home.recentlyPlayed", as: [BaseItem].self) ?? []
-        let cachedFreq = LibraryCache.shared.read("home.frequentAlbums", as: [BaseItem].self) ?? []
-        let cachedFavs = LibraryCache.shared.read("home.favoriteAlbums", as: [BaseItem].self) ?? []
-        recentlyAdded = ignored.filter(visibility.filter(cachedAdded))
-        recentlyPlayed = ignored.filter(visibility.filter(cachedPlayed))
-        frequentAlbums = visibility.filter(cachedFreq)
-        favoriteAlbums = visibility.filter(cachedFavs)
+        func cached(_ key: String) -> [BaseItem] { LibraryCache.shared.read(key, as: [BaseItem].self) ?? [] }
+        recentlyAdded = visibility.filter(cached("home.recentlyAdded"))
+        recentlyPlayed = Array(ignored.filter(visibility.filter(cached("home.recentlyPlayed"))).prefix(24))
+        recentlyPlayedAlbums = cached("home.recentlyPlayedAlbums")   // derived stubs; already scoped
+        topPlayedTracks = ignored.filter(visibility.filter(cached("home.topPlayedTracks")))
+        favoriteAlbums = visibility.filter(cached("home.favoriteAlbums"))
+    }
+
+    /// Distinct album items derived from a list of tracks, most-recent first.
+    /// Used for "Recent Albums" (the albums of recently-played tracks). The
+    /// stubs carry the album id as their own id, so artwork (`Items/{id}/Images`)
+    /// and navigation to the album detail both resolve.
+    static func distinctAlbums(from tracks: [BaseItem], limit: Int = 24) -> [BaseItem] {
+        var seen = Set<String>()
+        var out: [BaseItem] = []
+        for t in tracks {
+            guard let aid = t.AlbumId, !aid.isEmpty, seen.insert(aid).inserted else { continue }
+            out.append(BaseItem.stub(id: aid, name: t.Album ?? t.Name, type: "MusicAlbum"))
+            if out.count >= limit { break }
+        }
+        return out
     }
 }
 
@@ -214,12 +232,21 @@ public final class LibraryPrefetcher: ObservableObject {
         // 3. Warm ImageCache with artist + album artwork (the slow part).
         phase = "Caching artwork…"
         let header = ["Authorization": auth.authHeader()]
+        // Cache at the EXACT maxWidth this platform's grid/list tiles request.
+        // The image URL embeds the size, so a mismatch is a different cache key —
+        // the prefetched image never gets reused and tiles re-download on scroll
+        // (the "art popping in" seen on macOS, whose tiles ask for 320).
+        #if os(macOS)
+        let artistW = 320, albumW = 320
+        #else
+        let artistW = 180, albumW = 400
+        #endif
         var urls: [URL] = []
         for a in artists {
-            if let u = client.imageURL(for: a.Id, tag: a.ImageTags?["Primary"], maxWidth: 180) { urls.append(u) }
+            if let u = client.imageURL(for: a.Id, tag: a.ImageTags?["Primary"], maxWidth: artistW) { urls.append(u) }
         }
         for al in albums {
-            if let u = client.imageURL(for: al.Id, tag: al.ImageTags?["Primary"], maxWidth: 400) { urls.append(u) }
+            if let u = client.imageURL(for: al.Id, tag: al.ImageTags?["Primary"], maxWidth: albumW) { urls.append(u) }
         }
         let total = max(1, urls.count)
         var done = 0

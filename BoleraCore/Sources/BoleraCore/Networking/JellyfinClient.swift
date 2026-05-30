@@ -131,6 +131,36 @@ public struct JellyfinClient {
         return res.Items
     }
 
+    /// Albums the user recently played (most-recent first).
+    public func recentlyPlayedAlbums(limit: Int = 24) async throws -> [BaseItem] {
+        let q: [URLQueryItem] = [
+            URLQueryItem(name: "IncludeItemTypes", value: "MusicAlbum"),
+            URLQueryItem(name: "SortBy", value: "DatePlayed"),
+            URLQueryItem(name: "SortOrder", value: "Descending"),
+            URLQueryItem(name: "Filters", value: "IsPlayed"),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "Limit", value: String(limit))
+        ]
+        let req = try request("Users/\(userId)/Items", query: q)
+        let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
+        return res.Items
+    }
+
+    /// The user's most-played tracks, by play count.
+    public func topPlayedTracks(limit: Int = 24) async throws -> [BaseItem] {
+        let q: [URLQueryItem] = [
+            URLQueryItem(name: "IncludeItemTypes", value: "Audio"),
+            URLQueryItem(name: "SortBy", value: "PlayCount,SortName"),
+            URLQueryItem(name: "SortOrder", value: "Descending"),
+            URLQueryItem(name: "Filters", value: "IsPlayed"),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "Limit", value: String(limit))
+        ]
+        let req = try request("Users/\(userId)/Items", query: q)
+        let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
+        return res.Items.filter { $0.type == "Audio" }
+    }
+
     public func frequentlyPlayed(limit: Int = 24) async throws -> [BaseItem] {
         let q: [URLQueryItem] = [
             URLQueryItem(name: "IncludeItemTypes", value: "MusicAlbum"),
@@ -215,12 +245,19 @@ public struct JellyfinClient {
     public func playlists() async throws -> [BaseItem] {
         let q: [URLQueryItem] = [
             URLQueryItem(name: "IncludeItemTypes", value: "Playlist"),
+            // Music only — exclude video / TV-show playlists, whose MediaType is
+            // Video (e.g. a 200-episode "Arrowverse" playlist).
+            URLQueryItem(name: "MediaTypes", value: "Audio"),
             URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "Fields", value: "ChildCount"),
             URLQueryItem(name: "SortBy", value: "SortName")
         ]
         let req = try request("Users/\(userId)/Items", query: q)
         let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
-        return res.Items
+        // Jellyfin tags EMPTY playlists as MediaType=Audio by default, so an empty
+        // "watchlist" / TV stub slips past the Audio filter above. Drop playlists
+        // with no tracks — a music playlist worth showing has at least one song.
+        return res.Items.filter { ($0.SongCount ?? $0.ChildCount ?? 0) > 0 }
     }
 
     public func albumsForArtist(_ artistId: String, name: String? = nil) async throws -> [BaseItem] {

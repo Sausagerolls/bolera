@@ -51,13 +51,16 @@ private struct HomeContent_Mac: View {
                         dailySection
                     }
                     if !library.recentlyPlayed.isEmpty {
-                        section("Recently Played", items: library.recentlyPlayed)
+                        section("Recent Tracks", items: library.recentlyPlayed)
+                    }
+                    if !library.recentlyPlayedAlbums.isEmpty {
+                        section("Recent Albums", items: library.recentlyPlayedAlbums)
                     }
                     if !library.recentlyAdded.isEmpty {
                         section("Recently Added", items: library.recentlyAdded)
                     }
-                    if !library.frequentAlbums.isEmpty {
-                        section("On Repeat", items: library.frequentAlbums)
+                    if !library.topPlayedTracks.isEmpty {
+                        section("Top Played Tracks", items: library.topPlayedTracks)
                     }
                     if !library.favoriteAlbums.isEmpty {
                         section("Favorites", items: library.favoriteAlbums)

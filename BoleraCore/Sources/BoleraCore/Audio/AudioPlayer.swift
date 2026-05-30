@@ -227,7 +227,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
         isPlaying = false
         currentTime = 0
         duration = 0
-        artwork = nil
+        // Keep `artwork`: stop() leaves `current` set (the Now Playing screen
+        // still shows the last track), so blanking the cover here left a track
+        // with a placeholder image until the user pressed play. The next
+        // loadCurrent() resets artwork for the incoming track anyway.
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 

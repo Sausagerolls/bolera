@@ -41,6 +41,7 @@ struct PlaylistDetailView: View {
                         HStack(spacing: 12) {
                             JellyfinImage(itemId: song.AlbumId ?? song.Id, tag: song.AlbumPrimaryImageTag, maxWidth: 120, cornerRadius: 6)
                                 .frame(width: 44, height: 44)
+                                .overlay(NowPlayingArtworkBadge(trackId: song.Id))
                             VStack(alignment: .leading) {
                                 Text(song.Name).lineLimit(1)
                                 Text(song.primaryArtistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)

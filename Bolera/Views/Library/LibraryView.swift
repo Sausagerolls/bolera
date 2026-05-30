@@ -516,6 +516,7 @@ private struct DownloadedTrackRow: View {
             HStack(spacing: 12) {
                 JellyfinImage(itemId: t.artworkItemId, tag: t.artworkTag, maxWidth: 120, cornerRadius: 6)
                     .frame(width: 44, height: 44)
+                    .overlay(NowPlayingArtworkBadge(trackId: t.Id))
                 VStack(alignment: .leading) {
                     Text(t.Name).lineLimit(1)
                     Text(t.primaryArtistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)

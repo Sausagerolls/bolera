@@ -161,9 +161,7 @@ struct SongRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Text("\(index)")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                NowPlayingIndexMarker(trackId: song.Id, index: index)
                     .frame(width: 28)
                 VStack(alignment: .leading) {
                     Text(song.Name).font(.body).lineLimit(1)

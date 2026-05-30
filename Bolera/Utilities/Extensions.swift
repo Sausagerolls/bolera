@@ -96,6 +96,51 @@ struct JellyfinImage: View {
     }
 }
 
+/// Leading marker for a track row whose left element is an index number.
+/// Shows the app's now-playing glyph (matching the queue's
+/// `speaker.wave.2.fill`) when this track is the one AudioPlayer is on,
+/// otherwise the track's index. Kept as its own tiny view so only the marker
+/// re-renders on the player's frequent `currentTime` ticks — not the whole list.
+struct NowPlayingIndexMarker: View {
+    let trackId: String
+    let index: Int
+    @ObservedObject private var player = AudioPlayer.shared
+
+    var body: some View {
+        if player.current?.Id == trackId {
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.caption)
+                .foregroundStyle(Color.accentColor)
+        } else {
+            Text("\(index)")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Now-playing badge overlaid on a track row's leading artwork thumbnail (for
+/// rows that show a cover instead of an index): a dim scrim + speaker glyph,
+/// shown only for the track currently playing. Self-contained observer so the
+/// surrounding list doesn't re-render on `currentTime` ticks.
+struct NowPlayingArtworkBadge: View {
+    let trackId: String
+    var cornerRadius: CGFloat = 6
+    @ObservedObject private var player = AudioPlayer.shared
+
+    var body: some View {
+        if player.current?.Id == trackId {
+            ZStack {
+                Color.black.opacity(0.45)
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        }
+    }
+}
+
 /// Cross-platform shimmer placeholder for loading artwork. A faint gradient
 /// stripe sweeps across a muted background until the real image lands.
 struct ShimmerView: View {

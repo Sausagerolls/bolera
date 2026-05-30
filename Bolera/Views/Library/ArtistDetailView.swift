@@ -92,8 +92,7 @@ struct ArtistDetailView: View {
                                     AudioPlayer.shared.play(items: topTracks, startAt: idx)
                                 } label: {
                                     HStack(spacing: 12) {
-                                        Text("\(idx + 1)")
-                                            .font(.caption).foregroundStyle(.secondary)
+                                        NowPlayingIndexMarker(trackId: track.Id, index: idx + 1)
                                             .frame(width: 22, alignment: .trailing)
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(track.Name).font(.body).lineLimit(1)

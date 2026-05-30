@@ -208,10 +208,16 @@ struct ArtistDetail_Mac: View {
         VStack(spacing: 0) {
             ForEach(Array(topTracks.prefix(10).enumerated()), id: \.element.id) { idx, song in
                 HStack {
-                    Text("\(idx + 1)")
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, alignment: .trailing)
+                    Group {
+                        if player.current?.Id == song.Id {
+                            Image(systemName: "speaker.wave.2.fill").foregroundStyle(.tint)
+                        } else {
+                            Text("\(idx + 1)")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(width: 32, alignment: .trailing)
                     VStack(alignment: .leading) {
                         Text(song.Name).lineLimit(1)
                         Text(song.Album ?? "")

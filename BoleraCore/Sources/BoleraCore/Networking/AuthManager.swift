@@ -124,6 +124,11 @@ public final class AuthManager: ObservableObject {
         for sub in ["ImageCache", "LibraryCache", "DailyArtwork"] {
             try? fm.removeItem(at: caches.appendingPathComponent(sub))
         }
+        // LibraryCache now lives in Application Support (survives Caches purges) —
+        // clear that copy too on logout.
+        if let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            try? fm.removeItem(at: appSupport.appendingPathComponent("LibraryCache"))
+        }
     }
 }
 

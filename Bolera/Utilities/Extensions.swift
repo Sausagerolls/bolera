@@ -25,35 +25,30 @@ struct JellyfinImage: View {
     var maxWidth: Int = 600
     var cornerRadius: CGFloat = 8
     @EnvironmentObject var auth: AuthManager
-    /// Bumped each time an async load completes so SwiftUI re-evaluates
-    /// the body and picks up the newly-cached image. We don't store the
-    /// image in `@State` because that would persist the previous item's
-    /// pixels across a cell recycle, causing the wrong artwork to flash
-    /// briefly before the new load lands.
-    @State private var loadStamp: UUID = UUID()
-    @State private var failedItemId: String?
+    // Hold the decoded image in @State, keyed to the item it belongs to. This
+    // survives NSCache eviction (so artwork doesn't blank under memory pressure)
+    // WITHOUT the old `.imageCacheDidEvict` notification — which spawned a reload
+    // Task in every visible image on each eviction and, during a memory-pressure
+    // burst, flooded the main-thread Swift task allocator and CRASHED the app
+    // (EXC_BAD_ACCESS in swift_task_create). `loadedId == itemId` guards against
+    // showing the previous item's pixels for a recycled cell before reload lands.
+    @State private var image: UIImage?
+    @State private var loadedId: String?
+    @State private var failed: Bool = false
 
     var body: some View {
-        let resolved = resolvedImage()
-        // `loadStamp` is read here so the view formally depends on it,
-        // triggering a body re-evaluation when a load completes.
-        let _ = loadStamp
-        return ZStack {
-            if let resolved {
-                // Size to the frame the caller imposes (via a Color.clear
-                // anchor), fill the image into it, then clip at THAT boundary.
-                // Clipping the image directly clips to the image's own bounds —
-                // so a non-square cover (e.g. a wide 2:1 art) overflows the
-                // tile and draws over neighbouring cells. Anchoring + overlay
-                // center-crops any aspect ratio to the tile.
+        ZStack {
+            if let image, loadedId == itemId {
+                // Anchor + overlay center-crops any aspect ratio to the caller's
+                // frame (a non-square cover would otherwise overflow the tile).
                 Color.clear
                     .overlay {
-                        Image(uiImage: resolved)
+                        Image(uiImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            } else if failedItemId == itemId, itemId != nil {
+            } else if failed, itemId != nil {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color.white.opacity(0.06))
                     .overlay(
@@ -66,56 +61,29 @@ struct JellyfinImage: View {
             }
         }
         .task(id: itemId) { await reload() }
-        // NSCache evicts under memory pressure even for items that are
-        // still visible (a long playback session through a big library
-        // can blow past 600 thumbnails / 200MB). When that happens the
-        // mini player would otherwise go blank until the user manually
-        // changes tracks — re-fetch on the eviction signal.
-        .onReceive(NotificationCenter.default.publisher(for: .imageCacheDidEvict)) { _ in
-            if resolvedImage() == nil {
-                Task { await reload() }
-            }
-        }
-    }
-
-    /// Synchronously look up the current `itemId`'s image in the memory
-    /// cache. When a cell recycles to a new item this lets us render the
-    /// correct artwork on the very first frame if it's already cached,
-    /// instead of briefly showing the prior cell's image.
-    private func resolvedImage() -> UIImage? {
-        guard let id = itemId, let url = auth.serverURL else { return nil }
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        guard let imgURL = client.imageURL(for: id, tag: tag, maxWidth: maxWidth) else { return nil }
-        return ImageCache.shared.peekMemory(url: imgURL)
     }
 
     private func reload() async {
         guard let id = itemId, let url = auth.serverURL else {
-            await MainActor.run { failedItemId = itemId }
+            await MainActor.run { image = nil; loadedId = itemId; failed = (itemId != nil) }
             return
         }
         let client = JellyfinClient(baseURL: url, auth: auth)
         guard let imgURL = client.imageURL(for: id, tag: tag, maxWidth: maxWidth) else {
-            await MainActor.run { failedItemId = id }
+            await MainActor.run { failed = true; loadedId = id }
             return
         }
-        // If it's already in memory, no async work needed — just nudge
-        // SwiftUI to re-read it.
-        if ImageCache.shared.peekMemory(url: imgURL) != nil {
-            await MainActor.run {
-                failedItemId = nil
-                loadStamp = UUID()
-            }
+        if let cached = ImageCache.shared.peekMemory(url: imgURL) {
+            await MainActor.run { image = cached; loadedId = id; failed = false }
             return
         }
         let loaded = await ImageCache.shared.load(url: imgURL, headers: ["Authorization": auth.authHeader()])
         await MainActor.run {
-            if loaded != nil {
-                failedItemId = nil
-                loadStamp = UUID()
+            if let loaded {
+                image = loaded; loadedId = id; failed = false
             } else {
                 print("[JellyfinImage] Failed to load \(imgURL.absoluteString)")
-                failedItemId = id
+                failed = true; loadedId = id
             }
         }
     }

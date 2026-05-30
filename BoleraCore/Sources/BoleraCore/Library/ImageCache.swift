@@ -41,11 +41,13 @@ public final class ImageCache: NSObject, NSCacheDelegate, @unchecked Sendable {
     }
 
     public func cache(_ cache: NSCache<AnyObject, AnyObject>, willEvictObject obj: Any) {
-        // NSCache eviction posts on a background thread; bounce to the
-        // main queue so SwiftUI observers can update state directly.
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .imageCacheDidEvict, object: nil)
-        }
+        // Intentionally a NO-OP. This previously posted .imageCacheDidEvict on
+        // EVERY eviction; under memory pressure NSCache evicts in bursts, and
+        // each post spawned a reload Task in every visible JellyfinImage —
+        // flooding the main-thread Swift task allocator and crashing the app
+        // (EXC_BAD_ACCESS in swift_task_create, confirmed in field crash logs).
+        // JellyfinImage now holds its decoded image in @State, so it survives
+        // eviction without needing a signal.
     }
     private let diskURL: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!

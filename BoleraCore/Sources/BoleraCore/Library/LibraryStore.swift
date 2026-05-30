@@ -10,7 +10,11 @@ public final class LibraryCache: @unchecked Sendable {
     public static let shared = LibraryCache()
 
     private let dir: URL = {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        // Application Support (not Caches): the prefetched artist/album/track
+        // lists are small JSON and should survive iOS purging the Caches
+        // directory under memory pressure — otherwise the library reloads slowly
+        // from the server after every low-memory event.
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let d = base.appendingPathComponent("LibraryCache", isDirectory: true)
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d

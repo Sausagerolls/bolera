@@ -10,6 +10,22 @@ public struct JellyfinClient {
         self.auth = auth
     }
 
+    /// Dedicated session for JSON API calls. A 15s idle timeout (vs
+    /// URLSession.shared's 60s default) so a dropped link — e.g. a momentary
+    /// Tailscale blip — fails fast and the connectivity probe can recover,
+    /// instead of the request hanging for a minute. `timeoutIntervalForRequest`
+    /// is an INTER-PACKET timeout that resets as data arrives, so large library
+    /// fetches over a slow-but-alive link aren't cut off. `waitsForConnectivity`
+    /// is off so a request surfaces the failure immediately rather than silently
+    /// waiting. Streaming (AVPlayer) and downloads use their own sessions and
+    /// are untouched.
+    private static let apiSession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 15
+        cfg.waitsForConnectivity = false
+        return URLSession(configuration: cfg)
+    }()
+
     public enum APIError: LocalizedError {
         case badResponse(Int)
         case noData
@@ -42,7 +58,7 @@ public struct JellyfinClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: req)
+            (data, response) = try await Self.apiSession.data(for: req)
         } catch {
             await ConnectivityStore.shared.noteFailure(error)
             throw error
@@ -64,7 +80,7 @@ public struct JellyfinClient {
 
     @discardableResult
     private func sendVoid(_ req: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await Self.apiSession.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         guard (200..<300).contains(http.statusCode) else { throw APIError.badResponse(http.statusCode) }
         return data
@@ -84,7 +100,7 @@ public struct JellyfinClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: req)
+            (data, response) = try await Self.apiSession.data(for: req)
         } catch {
             await ConnectivityStore.shared.noteFailure(error)
             throw error

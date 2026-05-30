@@ -66,8 +66,32 @@ public final class ImageCache: NSObject, NSCacheDelegate, @unchecked Sendable {
         memory.object(forKey: url as NSURL)
     }
 
+    /// Best artwork for an item: the locally-persisted downloaded copy if one
+    /// exists (works offline, any size — one 600px file serves every request),
+    /// otherwise the server image URL. Use this everywhere artwork is shown so
+    /// downloaded music keeps its art with no network.
+    public func loadArtwork(itemId: String, tag: String?, client: JellyfinClient,
+                            maxWidth: Int, headers: [String: String]) async -> PlatformImage? {
+        if let local = DownloadManager.shared.localArtworkURL(forArtworkId: itemId),
+           let image = await load(url: local) {
+            return image
+        }
+        guard let url = client.imageURL(for: itemId, tag: tag, maxWidth: maxWidth) else { return nil }
+        return await load(url: url, headers: headers)
+    }
+
     public func load(url: URL, headers: [String: String] = [:]) async -> PlatformImage? {
         if let cached = memory.object(forKey: url as NSURL) { return cached }
+        // Local file (e.g. a downloaded track's persisted artwork) — read it
+        // directly off-main, no network, so downloaded art renders offline.
+        if url.isFileURL {
+            guard let image = await Task.detached(priority: .utility, operation: { () -> PlatformImage? in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return Self.decoded(from: data)
+            }).value else { return nil }
+            store(image, for: url)
+            return image
+        }
         let diskPath = diskURL.appendingPathComponent(url.absoluteString.sha)
         if let image = await Task.detached(priority: .utility, operation: { () -> PlatformImage? in
             guard let data = try? Data(contentsOf: diskPath) else { return nil }

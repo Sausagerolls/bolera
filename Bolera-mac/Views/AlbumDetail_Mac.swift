@@ -291,15 +291,16 @@ struct AlbumDetail_Mac: View {
         defer { loading = false }
         let client = JellyfinClient(baseURL: url, auth: auth)
         let header = ["Authorization": auth.authHeader()]
-        let imgURL = client.imageURL(for: album.Id, tag: album.ImageTags?["Primary"], maxWidth: 600)
 
         // Sequential awaits (artwork first so the hero image lands ASAP).
         // Avoids async-let / Task.detached actor-boundary crashes during
-        // navigation teardown.
-        if let imgURL = imgURL {
-            if let img = await ImageCache.shared.load(url: imgURL, headers: header) {
-                self.artwork = img
-            }
+        // navigation teardown. Prefer a downloaded local cover so it shows offline.
+        if let img = await ImageCache.shared.loadArtwork(itemId: album.Id,
+                                                         tag: album.ImageTags?["Primary"],
+                                                         client: client,
+                                                         maxWidth: 600,
+                                                         headers: header) {
+            self.artwork = img
         }
         if let full = try? await client.item(album.Id) {
             fullAlbum = full

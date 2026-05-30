@@ -456,7 +456,11 @@ struct DownloadedView: View {
             // existed, so they appear under Albums (and their tracks leave the
             // Individual list). No-op offline / once everything's recorded.
             guard let url = auth.serverURL else { return }
-            await dm.backfillDownloadedAlbums(using: JellyfinClient(baseURL: url, auth: auth))
+            let client = JellyfinClient(baseURL: url, auth: auth)
+            await dm.backfillDownloadedAlbums(using: client)
+            // Persist cover art for downloads made before art-caching existed,
+            // so they show artwork offline. No-op offline / once all cached.
+            await dm.cacheMissingArtwork(using: client)
         }
     }
 

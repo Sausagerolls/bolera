@@ -1073,11 +1073,15 @@ final class CarPlayCoordinator {
                     while index < pairs.count {
                         let (item, row) = pairs[index]
                         index += 1
-                        guard let imgURL = client.imageURL(for: item.artworkItemId,
-                                                           tag: item.artworkTag,
-                                                           maxWidth: 240) else { continue }
+                        let artId = item.artworkItemId
+                        let artTag = item.artworkTag
                         group.addTask {
-                            if let image = await ImageCache.shared.load(url: imgURL, headers: header) {
+                            // Downloaded copy first so artwork shows offline.
+                            if let image = await ImageCache.shared.loadArtwork(itemId: artId,
+                                                                              tag: artTag,
+                                                                              client: client,
+                                                                              maxWidth: 240,
+                                                                              headers: header) {
                                 await MainActor.run { row.setImage(image) }
                             }
                         }

@@ -69,6 +69,13 @@ struct JellyfinImage: View {
             return
         }
         let client = JellyfinClient(baseURL: url, auth: auth)
+        // A downloaded item's persisted cover art renders offline and at any
+        // size — prefer it over the server URL.
+        if let localArt = DownloadManager.shared.localArtworkURL(forArtworkId: id),
+           let img = await ImageCache.shared.load(url: localArt) {
+            await MainActor.run { image = img; loadedId = id; failed = false }
+            return
+        }
         guard let imgURL = client.imageURL(for: id, tag: tag, maxWidth: maxWidth) else {
             await MainActor.run { failed = true; loadedId = id }
             return

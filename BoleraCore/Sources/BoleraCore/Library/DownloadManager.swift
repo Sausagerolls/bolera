@@ -56,6 +56,15 @@ public final class DownloadManager: NSObject, ObservableObject {
         return dir
     }()
 
+    /// Where persisted cover art lives — one `{artworkItemId}.jpg` per album/track
+    /// so downloaded music shows artwork offline. A single 600px copy serves every
+    /// on-screen size (ImageCache decodes to ≤600px regardless of request width).
+    private var artworkDir: URL {
+        let d = baseDir.appendingPathComponent("Artwork", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+
     private var metadataURL: URL { baseDir.appendingPathComponent("metadata.json") }
     private var individualDownloadsURL: URL { baseDir.appendingPathComponent("individual_downloads.json") }
     private var downloadedPlaylistsURL: URL { baseDir.appendingPathComponent("downloaded_playlists.json") }
@@ -75,6 +84,44 @@ public final class DownloadManager: NSObject, ObservableObject {
         return resolvedFileURL(for: itemId)
     }
 
+    /// Local file URL of the persisted cover art for an artwork id
+    /// (`BaseItem.artworkItemId`), or nil if none was saved. Works offline —
+    /// no server round-trip. Prefer this over a server image URL for any item
+    /// that's been downloaded.
+    public func localArtworkURL(forArtworkId artworkId: String) -> URL? {
+        let u = artworkDir.appendingPathComponent("\(artworkId).jpg")
+        return FileManager.default.fileExists(atPath: u.path) ? u : nil
+    }
+
+    /// Fetch and persist `item`'s primary artwork next to the audio so it
+    /// renders offline. Keyed by `artworkItemId` (the album id for most tracks),
+    /// so every track of an album shares one file and the fetch dedups.
+    func cacheArtwork(for item: BaseItem, using client: JellyfinClient) async {
+        let artId = item.artworkItemId
+        let dest = artworkDir.appendingPathComponent("\(artId).jpg")
+        if FileManager.default.fileExists(atPath: dest.path) { return }
+        guard let url = client.imageURL(for: artId, tag: item.artworkTag, maxWidth: 600) else { return }
+        var req = URLRequest(url: url)
+        req.setValue(AuthManager.shared.authHeader(), forHTTPHeaderField: "Authorization")
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { return }
+        try? data.write(to: dest, options: .atomic)
+    }
+
+    /// Backfill cover art for any completed download missing its art file —
+    /// covers downloads made before art persistence existed. Requires network;
+    /// a no-op offline.
+    public func cacheMissingArtwork(using client: JellyfinClient) async {
+        let items: [BaseItem] = await MainActor.run {
+            completed.compactMap { metadata[$0] }
+        }
+        for item in items {
+            if localArtworkURL(forArtworkId: item.artworkItemId) == nil {
+                await cacheArtwork(for: item, using: client)
+            }
+        }
+    }
+
     public func download(_ item: BaseItem, using client: JellyfinClient, individual: Bool = false) {
         guard !isDownloaded(item.Id), tasks[item.Id] == nil else { return }
         let url = client.audioStreamURL(for: item.Id)
@@ -92,12 +139,15 @@ public final class DownloadManager: NSObject, ObservableObject {
         }
         // Enrich stored metadata with the full BaseItem (Genres, Overview,
         // etc.) — most list-fetching queries don't request these fields, so
-        // the metadata we got from the caller is often incomplete.
+        // the metadata we got from the caller is often incomplete — then
+        // persist the cover art so the track shows artwork offline.
         Task { @MainActor in
-            if let full = try? await client.item(item.Id) {
-                self.metadata[item.Id] = full
+            let enriched = try? await client.item(item.Id)
+            if let enriched {
+                self.metadata[item.Id] = enriched
                 self.persistMetadata()
             }
+            await self.cacheArtwork(for: enriched ?? item, using: client)
         }
         task.resume()
     }

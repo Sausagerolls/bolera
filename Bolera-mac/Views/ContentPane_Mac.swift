@@ -512,11 +512,12 @@ struct AlbumTile_Mac: View {
         guard image == nil,
               let url = auth.serverURL else { return }
         let client = JellyfinClient(baseURL: url, auth: auth)
-        guard let imgURL = client.imageURL(for: item.artworkItemId, tag: item.artworkTag, maxWidth: 320) else {
-            await MainActor.run { self.loadFailed = true }
-            return
-        }
-        let img = await ImageCache.shared.load(url: imgURL, headers: ["Authorization": auth.authHeader()])
+        // Prefer a downloaded item's local cover art so it shows offline.
+        let img = await ImageCache.shared.loadArtwork(itemId: item.artworkItemId,
+                                                      tag: item.artworkTag,
+                                                      client: client,
+                                                      maxWidth: 320,
+                                                      headers: ["Authorization": auth.authHeader()])
         await MainActor.run {
             self.image = img
             self.loadFailed = (img == nil)

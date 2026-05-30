@@ -491,7 +491,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
             updateNowPlaying()
         }
         Task {
-            if let image = await ImageCache.shared.load(url: url, headers: ["Authorization": authManager?.authHeader() ?? ""]) {
+            // Prefer the downloaded local copy so artwork shows offline; falls
+            // back to the server URL when the track isn't downloaded.
+            if let image = await ImageCache.shared.loadArtwork(itemId: item.artworkItemId,
+                                                               tag: item.artworkTag,
+                                                               client: client,
+                                                               maxWidth: 600,
+                                                               headers: ["Authorization": authManager?.authHeader() ?? ""]) {
                 await MainActor.run {
                     self.artwork = image
                     self.updateNowPlaying()

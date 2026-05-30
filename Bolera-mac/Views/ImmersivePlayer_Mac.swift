@@ -449,9 +449,12 @@ struct ImmersivePlayer_Mac: View {
         guard let current = player.current,
               let url = auth.serverURL else { return }
         let client = JellyfinClient(baseURL: url, auth: auth)
-        let imgURL = client.imageURL(for: current.artworkItemId, tag: current.artworkTag, maxWidth: 1200)
-        guard let imgURL else { return }
-        let img = await ImageCache.shared.load(url: imgURL, headers: ["Authorization": auth.authHeader()])
+        // Prefer the downloaded local cover so the player art shows offline.
+        let img = await ImageCache.shared.loadArtwork(itemId: current.artworkItemId,
+                                                      tag: current.artworkTag,
+                                                      client: client,
+                                                      maxWidth: 1200,
+                                                      headers: ["Authorization": auth.authHeader()])
         await MainActor.run { self.artwork = img }
     }
 }

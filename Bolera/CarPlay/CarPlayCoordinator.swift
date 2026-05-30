@@ -5,12 +5,18 @@ import BoleraCore
 
 /// Owns Bolera's CarPlay template hierarchy.
 ///
-/// Top-level tabs (left → right):
-///   1. **Make a Mix** — predefined mood prompts feed the same
+/// Top-level tabs (left → right). **Recents is first, so it's the
+/// default page the head unit shows on connect**, mirroring the phone
+/// app's Home tab:
+///   1. **Recents** — the same sections as the phone Home: Recent
+///      Tracks, Recent Albums, Recently Added, Top Played Tracks, and
+///      Favorites. Backed by a shared `LibraryStore` so the filtering
+///      (visibility/ignored) and the derived Recent Albums match the
+///      phone exactly. Tap a track to play in context; tap an album to
+///      open its detail.
+///   2. **Make a Mix** — predefined mood prompts feed the same
 ///      `MoodMixGenerator` the in-app sheet uses, then jump to Now
 ///      Playing once tracks have been resolved.
-///   2. **Recents** — recently played items with artwork; tap to play
-///      from that point.
 ///   3. **Library** — drill-down to Albums or Artists. Each lists rows
 ///      with artwork thumbnails + alphabetised section headers so a
 ///      large library stays navigable. Album rows push a detail
@@ -28,6 +34,12 @@ final class CarPlayCoordinator {
 
     private let interfaceController: CPInterfaceController
     private var cancellables = Set<AnyCancellable>()
+
+    /// Drives the Recents tab. Reusing `LibraryStore` keeps CarPlay's Recents
+    /// identical to the phone Home — same section data, same visibility/ignore
+    /// filtering, same derived Recent Albums — and shares the on-disk cache so
+    /// the tab populates instantly from cache before the server refresh lands.
+    private let recentsStore = LibraryStore()
 
     init(interfaceController: CPInterfaceController) {
         self.interfaceController = interfaceController
@@ -166,9 +178,10 @@ final class CarPlayCoordinator {
     }()
 
     private func buildRootTabBar() -> CPTabBarTemplate {
+        // Recents first → CarPlay selects it by default on connect.
         return CPTabBarTemplate(templates: [
-            makeMixTemplate,
             recentsTemplate,
+            makeMixTemplate,
             libraryTemplate,
             playlistsTemplate
         ])
@@ -194,23 +207,59 @@ final class CarPlayCoordinator {
             recentsTemplate.updateSections([signInPromptSection()])
             return
         }
-        do {
-            let items = try await client.recentlyPlayed(limit: 50)
-            let listItems = makeListItems(for: items, playInContext: items)
-            if listItems.isEmpty {
-                recentsTemplate.updateSections([emptySection("Nothing recent yet — play something on your phone first.")])
-            } else {
-                recentsTemplate.updateSections([
-                    CPListSection(items: listItems, header: nil, sectionIndexTitle: nil)
-                ])
-                loadArtwork(for: items, into: listItems)
-            }
-        } catch {
-            // Distinguish unreachable-server (most common: LAN-only
-            // Jellyfin, phone on cellular) from a genuinely empty
-            // library, so the user knows where to look.
-            recentsTemplate.updateSections([emptySection("Couldn't reach Jellyfin — check your phone's connection to the server.")])
+        // Show cached sections instantly (LibraryStore hydrates from disk on
+        // init); a bare loading row only when there's nothing cached yet.
+        if recentsStoreIsEmpty {
+            recentsTemplate.updateSections([CPListSection(items: [loadingRow()],
+                                                          header: nil, sectionIndexTitle: nil)])
+        } else {
+            renderRecentsSections()
         }
+        // Refresh from the server, then re-render. refresh() swallows network
+        // errors and keeps prior state, so a brief LAN drop just leaves the
+        // cached sections in place rather than blanking the tab.
+        await recentsStore.refresh(client: client)
+        renderRecentsSections()
+    }
+
+    private var recentsStoreIsEmpty: Bool {
+        recentsStore.recentlyPlayed.isEmpty
+            && recentsStore.recentlyPlayedAlbums.isEmpty
+            && recentsStore.topPlayedTracks.isEmpty
+            && recentsStore.recentlyAdded.isEmpty
+            && recentsStore.favoriteAlbums.isEmpty
+    }
+
+    /// Build the Recents tab's sections from `recentsStore`, mirroring the
+    /// phone Home order: Recent Tracks, Recent Albums, Top Played Tracks,
+    /// Recently Added, Favorites. Track rows play in their section's context;
+    /// album rows open the album detail.
+    private func renderRecentsSections() {
+        var sections: [CPListSection] = []
+        func trackSection(_ title: String, _ tracks: [BaseItem]) {
+            let capped = Array(tracks.prefix(24))
+            guard !capped.isEmpty else { return }
+            let rows = makeListItems(for: capped, playInContext: capped)
+            sections.append(CPListSection(items: rows, header: title, sectionIndexTitle: nil))
+            loadArtwork(for: capped, into: rows)
+        }
+        func albumSection(_ title: String, _ albums: [BaseItem]) {
+            let capped = Array(albums.prefix(24))
+            guard !capped.isEmpty else { return }
+            let rows = makeListItems(for: capped, playInContext: nil)
+            sections.append(CPListSection(items: rows, header: title, sectionIndexTitle: nil))
+            loadArtwork(for: capped, into: rows)
+        }
+        trackSection("Recent Tracks", recentsStore.recentlyPlayed)
+        albumSection("Recent Albums", recentsStore.recentlyPlayedAlbums)
+        trackSection("Top Played Tracks", recentsStore.topPlayedTracks)
+        albumSection("Recently Added", recentsStore.recentlyAdded)
+        albumSection("Favorites", recentsStore.favoriteAlbums)
+
+        if sections.isEmpty {
+            sections = [emptySection("Nothing recent yet — play something on your phone first.")]
+        }
+        recentsTemplate.updateSections(sections)
     }
 
     private func loadPlaylists() async {

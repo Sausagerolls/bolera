@@ -45,11 +45,11 @@ struct HomeView: View {
                     if !library.recentlyPlayedAlbums.isEmpty {
                         section(title: "Recent Albums", items: library.recentlyPlayedAlbums)
                     }
-                    if !library.recentlyAdded.isEmpty {
-                        section(title: "Recently Added", items: library.recentlyAdded)
-                    }
                     if !library.topPlayedTracks.isEmpty {
                         section(title: "Top Played Tracks", items: library.topPlayedTracks)
+                    }
+                    if !library.recentlyAdded.isEmpty {
+                        section(title: "Recently Added", items: library.recentlyAdded)
                     }
                     if !library.favoriteAlbums.isEmpty {
                         section(title: "Favorites", items: library.favoriteAlbums)

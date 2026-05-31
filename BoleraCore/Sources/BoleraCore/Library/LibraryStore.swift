@@ -159,19 +159,33 @@ public final class ConnectivityStore: ObservableObject {
     /// In-flight "is this failure real?" verification, so a burst of failing
     /// requests triggers only one probe.
     private var verifyTask: Task<Void, Never>?
+    /// Debounces a brief NWPath "unsatisfied" (e.g. a Wi-Fi AP roam, or the
+    /// gap during a Wi-Fi↔cellular handoff) so a momentary flap doesn't flip
+    /// the whole app offline.
+    private var pendingOfflineTask: Task<Void, Never>?
+    private var pathSatisfied = true
 
     public init() {
         monitor.pathUpdateHandler = { [weak self] path in
             let satisfied = path.status == .satisfied
             Task { @MainActor in
                 guard let self else { return }
-                if !satisfied {
-                    // No usable interface at all — definitely offline.
-                    self.goOffline()
-                } else if !self.isOnline {
-                    // Interface came back; verify the server is actually
-                    // reachable rather than optimistically claiming online.
-                    self.startProbe(immediate: true)
+                self.pathSatisfied = satisfied
+                if satisfied {
+                    // Interface up — cancel any pending offline and, if we were
+                    // offline, verify the server is actually reachable rather
+                    // than optimistically claiming online.
+                    self.pendingOfflineTask?.cancel(); self.pendingOfflineTask = nil
+                    if !self.isOnline { self.startProbe(immediate: true) }
+                } else if self.isOnline, self.pendingOfflineTask == nil {
+                    // Don't drop offline on a momentary path flap — wait out a
+                    // short grace and only go offline if it's still down.
+                    self.pendingOfflineTask = Task { [weak self] in
+                        try? await Task.sleep(nanoseconds: 2_500_000_000)
+                        guard let self, !Task.isCancelled else { return }
+                        self.pendingOfflineTask = nil
+                        if !self.pathSatisfied { self.goOffline() }
+                    }
                 }
             }
         }
@@ -210,7 +224,7 @@ public final class ConnectivityStore: ObservableObject {
 
     /// Flip offline and start re-probing the server until it answers.
     private func goOffline() {
-        if isOnline { isOnline = false }
+        if isOnline { print("[Connectivity] → offline"); isOnline = false }
         startProbe(immediate: false)
     }
 
@@ -239,6 +253,7 @@ public final class ConnectivityStore: ObservableObject {
     private func recoverOnline() {
         probeTask = nil
         if !isOnline {
+            print("[Connectivity] → online (server answered probe)")
             isOnline = true
             reconnect.send()
         }
@@ -247,6 +262,7 @@ public final class ConnectivityStore: ObservableObject {
     private func stopProbing() {
         probeTask?.cancel(); probeTask = nil
         verifyTask?.cancel(); verifyTask = nil
+        pendingOfflineTask?.cancel(); pendingOfflineTask = nil
     }
 
     private static func isConnectivityError(_ error: Error) -> Bool {

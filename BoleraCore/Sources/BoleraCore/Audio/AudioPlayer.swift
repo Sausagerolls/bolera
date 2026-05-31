@@ -64,6 +64,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private var crossfadeStartedFor: BaseItem?
     private var nextPrepared: Bool = false
 
+    /// Whether playback was active when an audio-session interruption began, so
+    /// we know to resume (and reactivate the session) when it ends.
+    private var interruptedWhilePlaying = false
+
     /// Pre-loaded AVURLAssets for upcoming queue items, keyed by track Id.
     /// Kept in memory so a Next press / natural end-of-track can swap to
     /// the next track instantly without an HTTP open + initial buffer
@@ -109,6 +113,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
                                                selector: #selector(handleRouteChange),
                                                name: AVAudioSession.routeChangeNotification,
                                                object: nil)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(handleMediaReset),
+                                               name: AVAudioSession.mediaServicesWereResetNotification,
+                                               object: nil)
         #endif
     }
 
@@ -122,6 +130,18 @@ public final class AudioPlayer: NSObject, ObservableObject {
         } catch {
             print("Audio session error: \(error)")
         }
+        #endif
+    }
+
+    /// Re-activate the shared audio session. The system DEACTIVATES it during
+    /// an interruption (Siri, a nav prompt, a notification while driving); if we
+    /// resume playback without reactivating, the player advances — progress bar
+    /// keeps moving — but no audio reaches the output. Reactivating here fixes
+    /// that "playing but silent" state.
+    private func reactivateSession() {
+        #if canImport(UIKit)
+        do { try AVAudioSession.sharedInstance().setActive(true) }
+        catch { print("[AudioPlayer] session reactivate failed: \(error)") }
         #endif
     }
 
@@ -782,12 +802,20 @@ public final class AudioPlayer: NSObject, ObservableObject {
               let type = AVAudioSession.InterruptionType(rawValue: typeRaw) else { return }
         switch type {
         case .began:
+            interruptedWhilePlaying = isPlaying
+            print("[AudioPlayer] interruption began (wasPlaying=\(isPlaying))")
             pause()
         case .ended:
-            if let optsRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt {
-                let opts = AVAudioSession.InterruptionOptions(rawValue: optsRaw)
-                if opts.contains(.shouldResume) { play() }
-            }
+            // The system deactivated our session during the interruption.
+            // Reactivate BEFORE resuming — otherwise the player advances
+            // (progress bar moves) but stays silent. Reactivate even when we
+            // don't auto-resume so the next manual play has audio.
+            reactivateSession()
+            let opts = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
+                .map { AVAudioSession.InterruptionOptions(rawValue: $0) } ?? []
+            print("[AudioPlayer] interruption ended (shouldResume=\(opts.contains(.shouldResume)), wasPlaying=\(interruptedWhilePlaying))")
+            if interruptedWhilePlaying && opts.contains(.shouldResume) { play() }
+            interruptedWhilePlaying = false
         @unknown default: break
         }
     }
@@ -801,13 +829,27 @@ public final class AudioPlayer: NSObject, ObservableObject {
             // Output device (CarPlay / Bluetooth / headphones) went away —
             // pause rather than blast audio out the phone speaker. Quiescing
             // the render thread here also narrows the tap-teardown window.
+            print("[AudioPlayer] route change: oldDeviceUnavailable → pause")
             pause()
         default:
             // .newDeviceAvailable / .categoryChange / .override /
             // .routeConfigurationChange — keep playing; the engine reconfigures
             // for the new route itself.
+            print("[AudioPlayer] route change: reason \(reason.rawValue) (keep playing)")
             break
         }
+    }
+
+    /// The audio server restarted (mediaservicesd reset): the session, both
+    /// AVPlayers' items, and the tap are all invalid now. Reconfigure the
+    /// session and rebuild the current item so we don't sit "playing" against a
+    /// dead engine — silent, with the progress bar still ticking.
+    @objc private func handleMediaReset(_ note: Notification) {
+        print("[AudioPlayer] media services were reset — reconfiguring + reloading")
+        configureAudioSession()
+        preloadedAssets.removeAll()
+        let resume = isPlaying
+        loadCurrent(autoplay: resume)
     }
     #endif
 

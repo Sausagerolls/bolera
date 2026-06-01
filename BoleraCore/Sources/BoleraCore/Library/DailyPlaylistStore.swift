@@ -167,6 +167,9 @@ public final class DailyPlaylistStore: ObservableObject {
         // preserve the existing playlists instead of clearing the section.
         guard !built.isEmpty else { return }
 
+        // Name each mix after the artist it actually leans on ("Snow Patrol
+        // Mix", "Slipknot Mix") instead of a generic time-of-day theme.
+        built = nameMixesByArtist(built)
         playlists = built
         persistPlaylists()
 
@@ -259,6 +262,41 @@ public final class DailyPlaylistStore: ObservableObject {
         }
         let sorted = tally.sorted { $0.value > $1.value }
         return Set(sorted.prefix(count).map { $0.key })
+    }
+
+    /// Primary-artist names in a mix, ranked by how many tracks each
+    /// contributes (ties broken alphabetically for stable, repeatable names).
+    private func rankedArtistNames(in tracks: [BaseItem]) -> [String] {
+        var tally: [String: Int] = [:]
+        for t in tracks {
+            let n = t.primaryArtistName
+            guard !n.isEmpty else { continue }
+            tally[n, default: 0] += 1
+        }
+        return tally.sorted {
+            $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key
+        }.map { $0.key }
+    }
+
+    /// Renames each mix after the artist it's built around — "<Artist> Mix" —
+    /// using the most-represented artist whose name isn't already taken by
+    /// another mix today (falls through to the next artist, then a numeric
+    /// suffix; keeps the original theme name only if a mix has no artist info).
+    private func nameMixesByArtist(_ playlists: [DailyPlaylist]) -> [DailyPlaylist] {
+        var used = Set<String>()
+        return playlists.map { pl in
+            let ranked = rankedArtistNames(in: pl.tracks)
+            var name = pl.name
+            if let fresh = ranked.first(where: { !used.contains("\($0) Mix") }) {
+                name = "\(fresh) Mix"
+            } else if let top = ranked.first {
+                var candidate = "\(top) Mix"; var i = 2
+                while used.contains(candidate) { candidate = "\(top) Mix \(i)"; i += 1 }
+                name = candidate
+            }
+            used.insert(name)
+            return DailyPlaylist(id: pl.id, name: name, theme: pl.theme, date: pl.date, tracks: pl.tracks)
+        }
     }
 
     /// Stable key per primary artist, for diversity throttling.
@@ -408,7 +446,11 @@ public final class DailyPlaylistStore: ObservableObject {
               let decoded = try? JSONDecoder().decode([DailyPlaylist].self, from: data) else {
             return
         }
-        playlists = decoded
+        // Rename on load too, so mixes already cached under an older build
+        // (generic time-of-day names) pick up the new artist names right away
+        // — no waiting for the next day's regeneration. Ids are preserved, so
+        // artwork still hydrates below.
+        playlists = nameMixesByArtist(decoded)
         // Hydrate artwork cache from disk lazily.
         for p in decoded {
             if let img = loadArtworkFromDisk(id: p.id) {

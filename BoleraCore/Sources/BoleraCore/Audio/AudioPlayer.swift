@@ -103,12 +103,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
     public override init() {
         super.init()
-        // Start/resume playback as soon as data is available instead of
-        // pre-buffering to "minimize stalls" — on a LAN the file streams faster
-        // than real-time, so the default wait-to-buffer behaviour was inserting
-        // needless multi-second stalls even though bandwidth wasn't the issue.
-        playerA.automaticallyWaitsToMinimizeStalling = false
-        playerB.automaticallyWaitsToMinimizeStalling = false
+        // Keep AVPlayer's default pre-buffering (automaticallyWaitsToMinimize-
+        // Stalling = true) so a crossfade has the incoming track buffered ahead
+        // of time. The stall diagnostics in handleTimeControl pinpoint the real
+        // cause of any mid-track buffering rather than disabling pre-buffer.
         shuffle = UserDefaults.standard.bool(forKey: "bolera.shuffle")
         repeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "bolera.repeat")) ?? .off
         addTimeObserver()

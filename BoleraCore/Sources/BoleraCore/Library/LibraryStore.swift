@@ -1,6 +1,11 @@
 import Foundation
 import Combine
 import Network
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// Disk cache for library lists (artists, albums, playlists, home sections).
 /// Used to show data instantly on view appear, then refresh in background.
@@ -194,6 +199,33 @@ public final class ConnectivityStore: ObservableObject {
                                                object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor in self?.stopProbing() }
         }
+        // Re-probe the moment the app returns to the foreground. A background-
+        // suspended app can't run the probe loop, so after being out of range
+        // (or coming back from a trip) recovery would otherwise stall until a
+        // network-path change or a manual action. Kicking a check on foreground
+        // is what reconnects when you reopen the app.
+        #if canImport(UIKit)
+        let didBecomeActive = UIApplication.didBecomeActiveNotification
+        #elseif canImport(AppKit)
+        let didBecomeActive = NSApplication.didBecomeActiveNotification
+        #endif
+        #if canImport(UIKit) || canImport(AppKit)
+        NotificationCenter.default.addObserver(forName: didBecomeActive,
+                                               object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.recheckNow() }
+        }
+        #endif
+    }
+
+    /// Re-probe the server immediately if we believe we're offline. Called on
+    /// app foreground and usable anywhere a prompt re-check is wanted — bypasses
+    /// the probe loop's backoff so reconnection isn't delayed when you reopen
+    /// the app after being out of range.
+    public func recheckNow() {
+        guard !isOnline else { return }
+        print("[Connectivity] foreground — re-probing server")
+        probeTask?.cancel(); probeTask = nil
+        startProbe(immediate: true)
     }
 
     /// Call from any successful network request — the server is reachable.

@@ -352,7 +352,7 @@ final class CarPlayCoordinator {
             template.updateSections(makeAlphabeticalSections(items: items, listItems: rows))
             loadArtwork(for: items, into: rows)
         } catch {
-            template.updateSections([emptySection("Couldn't reach Jellyfin — check your phone's connection to the server.")])
+            template.updateSections([unreachableSection()])
         }
     }
 
@@ -371,7 +371,7 @@ final class CarPlayCoordinator {
         do {
             items = try await client.artists(limit: 500)
         } catch {
-            template.updateSections([emptySection("Couldn't reach Jellyfin — check your phone's connection to the server.")])
+            template.updateSections([unreachableSection()])
             return
         }
         let rows = items.map { item in
@@ -640,10 +640,16 @@ final class CarPlayCoordinator {
         let dm = DownloadManager.shared
         let albums = dm.downloadedAlbumReps()
         let tracks = dm.individuallyDownloadedTracks()
+        // Lead with a reconnect row so it's reachable from the car even when
+        // there are no downloads to show.
         guard !albums.isEmpty || !tracks.isEmpty else {
-            return [emptySection("Offline — no downloads on this device yet.")]
+            return [CPListSection(items: [reconnectRow()],
+                                  header: "Offline — tap to reconnect",
+                                  sectionIndexTitle: nil)]
         }
-        var sections: [CPListSection] = []
+        var sections: [CPListSection] = [
+            CPListSection(items: [reconnectRow()], header: "Offline — tap to reconnect", sectionIndexTitle: nil)
+        ]
         if !albums.isEmpty {
             let rows = albums.map { makeDownloadedAlbumRow($0) }
             sections.append(CPListSection(items: rows, header: "Downloaded Albums", sectionIndexTitle: nil))
@@ -1102,6 +1108,31 @@ final class CarPlayCoordinator {
                              detailText: "Open Bolera on your phone and connect to your Jellyfin server.",
                              image: nil)
         return CPListSection(items: [row], header: nil, sectionIndexTitle: nil)
+    }
+
+    /// Tappable "reconnect" row for offline CarPlay views — recreates the
+    /// network session and retries, the same escape hatch as the phone's
+    /// offline banner. The coordinator's $isOnline subscription reloads the
+    /// tabs with server content once the connection comes back.
+    private func reconnectRow() -> CPListItem {
+        let row = CPListItem(text: "Reconnect to server",
+                             detailText: "Retry the connection",
+                             image: UIImage(systemName: "arrow.clockwise"))
+        row.handler = { _, completion in
+            Task { @MainActor in
+                ConnectivityStore.shared.forceReconnect()
+                completion()
+            }
+        }
+        return row
+    }
+
+    /// Section shown when the server is unreachable — leads with the reconnect
+    /// row so it can be retried right from the head unit.
+    private func unreachableSection() -> CPListSection {
+        return CPListSection(items: [reconnectRow()],
+                             header: "Couldn't reach Jellyfin — tap to retry",
+                             sectionIndexTitle: nil)
     }
 
     private func loadingRow() -> CPListItem {

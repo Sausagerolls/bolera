@@ -271,7 +271,9 @@ public final class ConnectivityStore: ObservableObject {
                 if delayNs > 0 { try? await Task.sleep(nanoseconds: delayNs) }
                 if Task.isCancelled { return }
                 let base = self?.serverBase ?? nil
-                if await Self.serverReachable(base: base) {
+                let reachable = await Self.serverReachable(base: base)
+                print("[Connectivity] probe reachable=\(reachable)")
+                if reachable {
                     self?.recoverOnline()
                     return
                 }

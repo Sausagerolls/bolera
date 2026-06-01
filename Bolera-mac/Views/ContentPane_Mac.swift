@@ -208,7 +208,7 @@ struct DailyPlaylistTile_Mac: View {
 
     var body: some View {
         Button {
-            AudioPlayer.shared.play(items: playlist.tracks)
+            AudioPlayer.shared.playMix(items: playlist.tracks, extender: daily.extender(for: playlist))
         } label: {
             ZStack(alignment: .bottomLeading) {
                 if let img = daily.artworkByPlaylist[playlist.id] {

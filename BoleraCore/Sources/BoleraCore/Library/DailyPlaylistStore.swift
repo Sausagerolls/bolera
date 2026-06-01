@@ -232,6 +232,54 @@ public final class DailyPlaylistStore: ObservableObject {
         )
     }
 
+    // MARK: - Endless extension
+
+    /// A `AudioPlayer.playMix` extender that keeps `mix` going: each time the
+    /// queue nears its end it fetches more tracks cohesive with the mix's anchor
+    /// artist, excluding whatever's already been queued. Builds its own client /
+    /// Last.fm from the shared session so call sites don't have to thread them.
+    public func extender(for mix: DailyPlaylist) -> (Set<String>) async -> [BaseItem] {
+        return { [weak self] existing in
+            guard let self, let url = AuthManager.shared.serverURL else { return [] }
+            let client = JellyfinClient(baseURL: url, auth: AuthManager.shared)
+            return await self.moreTracks(forMix: mix, excluding: existing,
+                                         client: client, lastFm: LastFmService.shared)
+        }
+    }
+
+    /// More tracks for an in-progress mix — anchored on its dominant artist,
+    /// not already in `existing`. Draws from Last.fm-similar artists plus
+    /// Jellyfin's instant-mix radio (a renewable pool, so repeated top-ups keep
+    /// finding new tracks in the same lane), throttled per artist for cohesion.
+    func moreTracks(forMix mix: DailyPlaylist, excluding existing: Set<String>,
+                    client: JellyfinClient, lastFm: LastFmService?) async -> [BaseItem] {
+        let dominant = rankedArtistNames(in: mix.tracks).first
+        let seed = mix.tracks.first(where: { $0.primaryArtistName == dominant }) ?? mix.tracks.first
+        guard let seed else { return [] }
+
+        var pool: [BaseItem] = []
+        if lastFm?.hasAppCredentials == true, let lf = lastFm {
+            pool = await buildLastFmInformedPool(seed: seed, client: client, lastFm: lf)
+        }
+        let radio = (try? await client.instantMix(itemId: seed.Id, limit: 60)) ?? []
+        pool += await expandToAudio(radio, client: client)
+
+        let ignore = IgnoredTracksStore.shared
+        let seedKey = artistKey(for: seed)
+        var seen = existing
+        var perArtist: [String: Int] = [:]
+        var out: [BaseItem] = []
+        for t in ignore.filter(pool).shuffled() where t.type == "Audio" {
+            guard seen.insert(t.Id).inserted else { continue }
+            let k = artistKey(for: t)
+            let cap = (k == seedKey) ? 4 : 3
+            let c = perArtist[k] ?? 0
+            if c < cap { perArtist[k] = c + 1; out.append(t) }
+            if out.count >= 20 { break }
+        }
+        return out
+    }
+
     /// Tallies appearance frequency of each primary artist in `tracks` and
     /// returns the top `count` artist keys.
     private func topArtistIds(from tracks: [BaseItem], count: Int) -> Set<String> {

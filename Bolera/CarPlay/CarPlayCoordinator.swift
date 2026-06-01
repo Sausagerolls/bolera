@@ -555,7 +555,8 @@ final class CarPlayCoordinator {
     // MARK: - Daily Mix playback
 
     private func playDailyMix(_ mix: DailyPlaylist) async {
-        AudioPlayer.shared.play(items: mix.tracks)
+        AudioPlayer.shared.playMix(items: mix.tracks,
+                                   extender: DailyPlaylistStore.shared.extender(for: mix))
         pushNowPlaying()
     }
 

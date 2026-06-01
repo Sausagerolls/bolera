@@ -149,6 +149,8 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
     public func play(items: [BaseItem], startAt index: Int = 0) {
         guard !items.isEmpty else { return }
+        queueExtender = nil          // a plain play isn't an endless mix
+        extenderExhausted = false
         playSessionId = UUID().uuidString
         originalQueue = items
         if shuffle {
@@ -162,6 +164,47 @@ public final class AudioPlayer: NSObject, ObservableObject {
             currentIndex = index
         }
         loadCurrent(autoplay: true)
+    }
+
+    /// Supplies more tracks when an endless mix nears its end. Given the ids
+    /// already queued this session, returns fresh tracks to append.
+    public typealias QueueExtender = (_ existingIds: Set<String>) async -> [BaseItem]
+    public var queueExtender: QueueExtender?
+    private var isExtendingQueue = false
+    private var extenderExhausted = false
+
+    /// Play `items` as an endless mix: as the queue nears its end, `extender`
+    /// is asked for more tracks and they're appended (deduped, no repeats), so
+    /// a daily mix keeps going instead of stopping.
+    public func playMix(items: [BaseItem], extender: @escaping QueueExtender) {
+        play(items: items)           // resets queueExtender to nil…
+        queueExtender = extender      // …then arm it for this mix
+    }
+
+    /// When fewer than a couple of tracks remain ahead of the current one, ask
+    /// the extender for more and append what's genuinely new. Called on every
+    /// track change (loadCurrent).
+    private func maybeExtendQueue() {
+        guard let extender = queueExtender, !isExtendingQueue, !extenderExhausted,
+              !queue.isEmpty, queue.count - 1 - currentIndex <= 2 else { return }
+        isExtendingQueue = true
+        let existing = Set(queue.map { $0.Id }).union(originalQueue.map { $0.Id })
+        Task { @MainActor in
+            let more = await extender(existing)
+            self.isExtendingQueue = false
+            // Bail if the play context changed while fetching.
+            guard self.queueExtender != nil else { return }
+            let have = Set(self.queue.map { $0.Id })
+            let fresh = more.filter { !have.contains($0.Id) }
+            if fresh.isEmpty {
+                // Nothing new to add — the artist's neighbourhood is tapped out;
+                // stop hammering the extender for the rest of this mix.
+                self.extenderExhausted = true
+                return
+            }
+            self.queue.append(contentsOf: fresh)
+            self.originalQueue.append(contentsOf: fresh)
+        }
     }
 
     public func playNext(_ item: BaseItem) {
@@ -447,6 +490,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         updateNowPlaying()
         Task { try? await reportStart(item: item) }
         Task { @MainActor in await LastFmService.shared.updateNowPlaying(item); hasUpdatedNowPlayingCurrent = true }
+        maybeExtendQueue()   // endless-mix: top up the queue as it nears the end
     }
 
     /// Asynchronously load tracks off-main, then attach the audio mix on main.

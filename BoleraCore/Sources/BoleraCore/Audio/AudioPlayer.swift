@@ -103,6 +103,12 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
     public override init() {
         super.init()
+        // Start/resume playback as soon as data is available instead of
+        // pre-buffering to "minimize stalls" — on a LAN the file streams faster
+        // than real-time, so the default wait-to-buffer behaviour was inserting
+        // needless multi-second stalls even though bandwidth wasn't the issue.
+        playerA.automaticallyWaitsToMinimizeStalling = false
+        playerB.automaticallyWaitsToMinimizeStalling = false
         shuffle = UserDefaults.standard.bool(forKey: "bolera.shuffle")
         repeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "bolera.repeat")) ?? .off
         addTimeObserver()
@@ -419,7 +425,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             if let local = DownloadManager.shared.localFileURL(for: item.Id) {
                 url = local
             } else if let client = client {
-                url = client.playbackStreamURL(for: item.Id)
+                url = client.audioStreamURL(for: item.Id)
             } else { return }
             asset = AVURLAsset(url: url)
         }
@@ -631,7 +637,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         if let local = DownloadManager.shared.localFileURL(for: nextItem.Id) {
             url = local
         } else if let client = client {
-            url = client.playbackStreamURL(for: nextItem.Id)
+            url = client.audioStreamURL(for: nextItem.Id)
         } else { return }
 
         let asset = AVURLAsset(url: url)
@@ -766,7 +772,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             if let local = DownloadManager.shared.localFileURL(for: item.Id) {
                 url = local
             } else if let client = client {
-                url = client.playbackStreamURL(for: item.Id)
+                url = client.audioStreamURL(for: item.Id)
             } else { continue }
             let opts: [String: Any] = [AVURLAssetPreferPreciseDurationAndTimingKey: false]
             let asset = AVURLAsset(url: url, options: opts)
@@ -849,6 +855,12 @@ public final class AudioPlayer: NSObject, ObservableObject {
             guard let self = self, self.activeIsA == isA else { return }
             let status = player.timeControlStatus
             self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
+            if status == .waitingToPlayAtSpecifiedRate, let item = player.currentItem {
+                // Diagnostics for the "audio cut out, 30s gap on a fast LAN"
+                // stalls — reasonForWaitingToPlay says WHY (e.g. .toMinimizeStalls
+                // = waiting on data), plus the buffer flags + any item error.
+                print("[AudioPlayer] STALL '\(self.current?.Name ?? "?")' reason=\(player.reasonForWaitingToPlay?.rawValue ?? "nil") bufferEmpty=\(item.isPlaybackBufferEmpty) likelyToKeepUp=\(item.isPlaybackLikelyToKeepUp) bufferFull=\(item.isPlaybackBufferFull) error=\(item.error.map { String(describing: $0) } ?? "none")")
+            }
             // .paused means actually paused; .playing and .waiting both mean the
             // user intends playback (a stall isn't a pause).
             self.isPlaying = (status != .paused)

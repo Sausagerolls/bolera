@@ -19,12 +19,24 @@ public struct JellyfinClient {
     /// is off so a request surfaces the failure immediately rather than silently
     /// waiting. Streaming (AVPlayer) and downloads use their own sessions and
     /// are untouched.
-    private static let apiSession: URLSession = {
+    private static func makeAPISession() -> URLSession {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 15
         cfg.waitsForConnectivity = false
         return URLSession(configuration: cfg)
-    }()
+    }
+    private static var apiSession: URLSession = makeAPISession()
+
+    /// Tear down and recreate the API session. A long-lived URLSession can hold
+    /// connections that went stale across a network transition (Wi-Fi↔cellular,
+    /// Tailscale up/down) — requests then keep failing even though the server is
+    /// reachable, and only an app restart cleared it. Calling this on
+    /// reconnect/foreground gives a fresh session with fresh connections, so
+    /// recovery no longer needs a reboot.
+    public static func resetSession() {
+        apiSession.invalidateAndCancel()
+        apiSession = makeAPISession()
+    }
 
     public enum APIError: LocalizedError {
         case badResponse(Int)

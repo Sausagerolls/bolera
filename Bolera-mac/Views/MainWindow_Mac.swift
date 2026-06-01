@@ -90,15 +90,20 @@ struct MainWindow_Mac: View {
 
 struct OfflineBanner_Mac: View {
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "wifi.slash")
-            Text("Offline — reconnect to your server").lineLimit(1)
-            Spacer()
+        Button { ConnectivityStore.shared.forceReconnect() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "wifi.slash")
+                Text("Offline — click to reconnect").lineLimit(1)
+                Spacer()
+                Image(systemName: "arrow.clockwise")
+            }
+            .font(.callout.weight(.medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .background(Color.orange.opacity(0.85))
+            .contentShape(Rectangle())
         }
-        .font(.callout.weight(.medium))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 16).padding(.vertical, 8)
-        .background(Color.orange.opacity(0.85))
+        .buttonStyle(.plain)
     }
 }
 

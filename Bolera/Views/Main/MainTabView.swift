@@ -106,17 +106,23 @@ private struct MiniPlayerScrollInset: ViewModifier {
 
 /// App-wide offline notice, hosted as a top safe-area inset in MainTabView.
 private struct OfflineBanner: View {
+    @EnvironmentObject var connectivity: ConnectivityStore
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "wifi.slash")
-            Text("Offline — reconnect to your server")
-                .lineLimit(1)
-            Spacer()
+        Button { connectivity.forceReconnect() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "wifi.slash")
+                Text("Offline — tap to reconnect")
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "arrow.clockwise")
+            }
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color.orange.opacity(0.85))
+            .contentShape(Rectangle())
         }
-        .font(.footnote.weight(.medium))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color.orange.opacity(0.85))
+        .buttonStyle(.plain)
     }
 }

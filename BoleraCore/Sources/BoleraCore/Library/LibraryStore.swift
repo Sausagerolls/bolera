@@ -223,9 +223,25 @@ public final class ConnectivityStore: ObservableObject {
     /// the app after being out of range.
     public func recheckNow() {
         guard !isOnline else { return }
-        print("[Connectivity] foreground — re-probing server")
+        NSLog("[Connectivity] foreground — recreating session + re-probing")
+        // Recreate the API session so a fresh probe (and the refresh that
+        // follows recovery) don't reuse connections that went stale while we
+        // were out — the thing that previously needed an app reboot to clear.
+        JellyfinClient.resetSession()
         probeTask?.cancel(); probeTask = nil
         startProbe(immediate: true)
+    }
+
+    /// Manual "try again" — used by the offline banner. Recreates the session
+    /// and optimistically goes online, firing a refresh; if the server really
+    /// is unreachable the next failed request just flips back offline. Mirrors
+    /// what an app reboot did, without the reboot.
+    public func forceReconnect() {
+        NSLog("[Connectivity] manual reconnect requested")
+        JellyfinClient.resetSession()
+        stopProbing()
+        isOnline = true
+        reconnect.send()
     }
 
     /// Call from any successful network request — the server is reachable.
@@ -256,7 +272,7 @@ public final class ConnectivityStore: ObservableObject {
 
     /// Flip offline and start re-probing the server until it answers.
     private func goOffline() {
-        if isOnline { print("[Connectivity] → offline"); isOnline = false }
+        if isOnline { NSLog("[Connectivity] → offline"); isOnline = false }
         startProbe(immediate: false)
     }
 
@@ -272,7 +288,7 @@ public final class ConnectivityStore: ObservableObject {
                 if Task.isCancelled { return }
                 let base = self?.serverBase ?? nil
                 let reachable = await Self.serverReachable(base: base)
-                print("[Connectivity] probe reachable=\(reachable)")
+                NSLog("[Connectivity] probe reachable=\(reachable)")
                 if reachable {
                     self?.recoverOnline()
                     return
@@ -287,7 +303,7 @@ public final class ConnectivityStore: ObservableObject {
     private func recoverOnline() {
         probeTask = nil
         if !isOnline {
-            print("[Connectivity] → online (server answered probe)")
+            NSLog("[Connectivity] → online (server answered probe)")
             isOnline = true
             reconnect.send()
         }
@@ -321,8 +337,16 @@ public final class ConnectivityStore: ObservableObject {
         var req = URLRequest(url: base.appendingPathComponent("System/Info/Public"))
         req.timeoutInterval = 6
         req.cachePolicy = .reloadIgnoringLocalCacheData
+        // Fresh ephemeral session per probe: no connection pooling, so the probe
+        // can't get wedged on a stale connection left over from a network change
+        // (the state that previously survived until an app reboot).
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 6
+        cfg.waitsForConnectivity = false
+        let session = URLSession(configuration: cfg)
+        defer { session.finishTasksAndInvalidate() }
         do {
-            let (_, resp) = try await URLSession.shared.data(for: req)
+            let (_, resp) = try await session.data(for: req)
             return resp is HTTPURLResponse
         } catch {
             return false

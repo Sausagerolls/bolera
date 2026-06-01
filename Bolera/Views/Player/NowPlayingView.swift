@@ -382,7 +382,12 @@ struct NowPlayingContent: View {
             }
             Button { player.previous() } label: { Image(systemName: "backward.fill").font(.title) }
             Button { player.togglePlayPause() } label: {
-                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 68))
+                ZStack {
+                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 68))
+                        .opacity(player.isBuffering ? 0.25 : 1)
+                    if player.isBuffering { ProgressView().controlSize(.large) }
+                }
             }
             Button { player.next() } label: { Image(systemName: "forward.fill").font(.title) }
             Button { player.cycleRepeatMode() } label: {

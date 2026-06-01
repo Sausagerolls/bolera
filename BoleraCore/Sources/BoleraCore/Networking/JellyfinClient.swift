@@ -676,6 +676,8 @@ public struct JellyfinClient {
     /// AVPlayer's MTAudioProcessingTap (the visualizer + EQ) to enumerate audio
     /// tracks — Jellyfin's `/universal` transcoded stream returns 0 tracks to
     /// AVAsset and silently disables the tap.
+    /// Direct, full-quality stream (no transcode). Used for DOWNLOADS so saved
+    /// files stay lossless.
     public func audioStreamURL(for itemId: String) -> URL {
         guard var comps = URLComponents(url: baseURL.appendingPathComponent("Audio/\(itemId)/stream"), resolvingAgainstBaseURL: false) else {
             return baseURL
@@ -685,6 +687,32 @@ public struct JellyfinClient {
             URLQueryItem(name: "api_key", value: auth.accessToken ?? "")
         ]
         return comps.url ?? baseURL
+    }
+
+    /// Stream URL for PLAYBACK that honours the user's "Max Streaming Bitrate"
+    /// setting. At Lossless it's the direct file; otherwise Jellyfin's universal
+    /// endpoint direct-plays when the source is already within the cap and
+    /// PROGRESSIVE-transcodes down to it when it's over — far less data over a
+    /// slow/remote (e.g. Tailscale) link, so it doesn't stall. Progressive (not
+    /// HLS) keeps the EQ audio tap working. Downloads are unaffected.
+    public func playbackStreamURL(for itemId: String) -> URL {
+        let maxKbps = UserDefaults.standard.object(forKey: "bolera.maxBitrate") as? Int ?? 320
+        if maxKbps >= 1411 { return audioStreamURL(for: itemId) }   // Lossless → direct file
+        guard var comps = URLComponents(url: baseURL.appendingPathComponent("Audio/\(itemId)/universal"), resolvingAgainstBaseURL: false) else {
+            return audioStreamURL(for: itemId)
+        }
+        comps.queryItems = [
+            URLQueryItem(name: "UserId", value: auth.userId ?? ""),
+            URLQueryItem(name: "DeviceId", value: AuthManager.deviceId),
+            URLQueryItem(name: "MaxStreamingBitrate", value: String(maxKbps * 1000)),
+            URLQueryItem(name: "Container", value: "mp3,aac,m4a,flac,alac,wav,ogg,opus,webma"),
+            URLQueryItem(name: "TranscodingContainer", value: "mp3"),
+            URLQueryItem(name: "TranscodingProtocol", value: "http"),
+            URLQueryItem(name: "AudioCodec", value: "mp3"),
+            URLQueryItem(name: "EnableRedirection", value: "true"),
+            URLQueryItem(name: "api_key", value: auth.accessToken ?? "")
+        ]
+        return comps.url ?? audioStreamURL(for: itemId)
     }
 
     /// Primary image URL for an item. Falls back to album art if the item has no primary tag.

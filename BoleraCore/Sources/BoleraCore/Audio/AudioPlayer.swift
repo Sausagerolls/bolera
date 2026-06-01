@@ -23,6 +23,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
     @Published public private(set) var queue: [BaseItem] = []
     @Published public private(set) var currentIndex: Int = 0
     @Published public private(set) var isPlaying: Bool = false
+    /// True while the current item is stalled buffering (timeControlStatus ==
+    /// .waitingToPlayAtSpecifiedRate) — playback is intended but audio is
+    /// waiting on data. Lets the UI show a spinner instead of a frozen bar.
+    @Published public private(set) var isBuffering: Bool = false
     @Published public private(set) var currentTime: Double = 0
     @Published public private(set) var duration: Double = 0
     @Published public private(set) var artwork: PlatformImage?
@@ -415,7 +419,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             if let local = DownloadManager.shared.localFileURL(for: item.Id) {
                 url = local
             } else if let client = client {
-                url = client.audioStreamURL(for: item.Id)
+                url = client.playbackStreamURL(for: item.Id)
             } else { return }
             asset = AVURLAsset(url: url)
         }
@@ -627,7 +631,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         if let local = DownloadManager.shared.localFileURL(for: nextItem.Id) {
             url = local
         } else if let client = client {
-            url = client.audioStreamURL(for: nextItem.Id)
+            url = client.playbackStreamURL(for: nextItem.Id)
         } else { return }
 
         let asset = AVURLAsset(url: url)
@@ -762,7 +766,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             if let local = DownloadManager.shared.localFileURL(for: item.Id) {
                 url = local
             } else if let client = client {
-                url = client.audioStreamURL(for: item.Id)
+                url = client.playbackStreamURL(for: item.Id)
             } else { continue }
             let opts: [String: Any] = [AVURLAssetPreferPreciseDurationAndTimingKey: false]
             let asset = AVURLAsset(url: url, options: opts)
@@ -827,14 +831,33 @@ public final class AudioPlayer: NSObject, ObservableObject {
     }
 
     private func observePlayer() {
-        rateObserver = playerA.observe(\.rate, options: [.new]) { [weak self] p, _ in
-            guard let self = self, self.activeIsA else { return }
-            self.isPlaying = p.rate != 0
-            self.updateNowPlaying()
+        // Observe timeControlStatus, NOT rate. During a buffering stall the
+        // rate stays at 1.0 while timeControlStatus becomes
+        // .waitingToPlayAtSpecifiedRate — observing rate alone leaves the app
+        // thinking it's playing, so the lock-screen keeps advancing while the
+        // audio (and the in-app bar) is stalled.
+        rateObserver = playerA.observe(\.timeControlStatus, options: [.new]) { [weak self] p, _ in
+            self?.handleTimeControl(p, isA: true)
         }
-        _ = playerB.observe(\.rate, options: [.new]) { [weak self] p, _ in
-            guard let self = self, !self.activeIsA else { return }
-            self.isPlaying = p.rate != 0
+        _ = playerB.observe(\.timeControlStatus, options: [.new]) { [weak self] p, _ in
+            self?.handleTimeControl(p, isA: false)
+        }
+    }
+
+    private func handleTimeControl(_ player: AVPlayer, isA: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.activeIsA == isA else { return }
+            let status = player.timeControlStatus
+            self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
+            // .paused means actually paused; .playing and .waiting both mean the
+            // user intends playback (a stall isn't a pause).
+            self.isPlaying = (status != .paused)
+            // On resume, re-read the real position so Now Playing re-syncs after
+            // the frozen-bar stall instead of jumping from a stale elapsed time.
+            if status == .playing, let item = player.currentItem {
+                let t = CMTimeGetSeconds(item.currentTime())
+                if t.isFinite { self.currentTime = t }
+            }
             self.updateNowPlaying()
         }
     }
@@ -922,12 +945,16 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
     private func updateNowPlaying() {
         guard let item = current else { return }
+        // Use the REAL playback rate (0 while stalled buffering), not just the
+        // intent — otherwise the system extrapolates elapsed time from rate 1.0
+        // and the lock-screen progress keeps advancing while audio is stalled.
+        let activelyPlaying = (activePlayer.timeControlStatus == .playing)
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: item.Name,
             MPMediaItemPropertyArtist: item.primaryArtistName,
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyPlaybackRate: activelyPlaying ? 1.0 : 0.0,
             // Without an explicit media type, CarPlay falls back to a
             // generic layout where the title can wrap onto a second line
             // and overlap the artist row. Declaring audio gives us the

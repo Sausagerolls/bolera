@@ -41,7 +41,9 @@ public final class DailyPlaylistStore: ObservableObject {
     @Published public private(set) var lastError: String?
     @Published public private(set) var isGenerating: Bool = false
 
-    private static let cacheKey = "bolera.dailyPlaylists.cache.v9"
+    // v10: mixes are now single-artist-anchored (cohesive) — invalidate the
+    // old multi-seed "mashup" caches so they regenerate with the new logic.
+    private static let cacheKey = "bolera.dailyPlaylists.cache.v10"
     private let artworkDir: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         let d = base.appendingPathComponent("DailyArtwork", isDirectory: true)
@@ -123,27 +125,32 @@ public final class DailyPlaylistStore: ObservableObject {
         let themes = Self.pickThemes(forDate: today)
         let useLastFm = lastFm?.hasAppCredentials ?? false
 
-        // Compute a shared seed pool from the user's most-listened-to artists
-        // over the past few days. Each theme draws seeds from this pool so
-        // mixes reflect the user's recent taste.
+        // Seed pool = the user's most-played artists recently.
         let recent = (try? await client.recentlyPlayed(limit: 200)) ?? []
         let recentAudio = await expandToAudio(recent, client: client)
         let topArtists = topArtistIds(from: recentAudio, count: 15)
         let topArtistTracks = recentAudio.filter { topArtists.contains(artistKey(for: $0)) }
-        // Fallback: if user has no recent plays, fall back to per-theme fetcher.
-        let sharedSeedPool: [BaseItem] = topArtistTracks.isEmpty ? recentAudio : topArtistTracks
+        var seedPool: [BaseItem] = topArtistTracks.isEmpty ? recentAudio : topArtistTracks
+        if seedPool.isEmpty {
+            let favs = (try? await client.favorites(type: "Audio", limit: 100)) ?? []
+            seedPool = await expandToAudio(favs, client: client)
+        }
 
-        // Build all themes in parallel. URLSession awaits suspend the main
-        // actor cooperatively, so the four themes' network work overlaps
-        // and total wall time drops to roughly the slowest single theme
-        // instead of the sum.
+        // ONE distinct anchor artist per mix. Each mix is then that anchor plus
+        // its Last.fm-similar artists — tonally cohesive — instead of mashing
+        // several unrelated seeds together (which put Alestorm and Admiral
+        // Fallow in the same mix). Mixes build in parallel; main-actor network
+        // awaits overlap, so wall time ≈ a single mix's.
+        let seeds = pickDiverseSeeds(seedPool, count: themes.count)
+        guard !seeds.isEmpty else { return }
         let snapshotIgnore = IgnoredTracksStore.shared
         var built = await withTaskGroup(of: (Int, DailyPlaylist?).self) { group -> [DailyPlaylist] in
-            for (idx, theme) in themes.enumerated() {
+            for (idx, seed) in seeds.enumerated() {
+                let themeId = themes[idx].id
                 group.addTask { @MainActor in
                     let pl = await self.buildPlaylist(
-                        for: theme,
-                        sharedSeedPool: sharedSeedPool,
+                        seed: seed,
+                        themeId: themeId,
                         useLastFm: useLastFm,
                         lastFm: lastFm,
                         client: client,
@@ -157,8 +164,7 @@ public final class DailyPlaylistStore: ObservableObject {
             for await (idx, pl) in group {
                 if let pl { slots.append((idx, pl)) }
             }
-            // Preserve theme order from `themes`.
-            slots.sort { $0.0 < $1.0 }
+            slots.sort { $0.0 < $1.0 }   // preserve seed order
             return slots.map { $0.1 }
         }
 
@@ -177,78 +183,53 @@ public final class DailyPlaylistStore: ObservableObject {
         Task { await renderAllArtwork(auth: auth, client: client) }
     }
 
-    /// Build the tracks for a single theme. Pure async — safe to run
-    /// concurrently with the other themes via TaskGroup.
-    private func buildPlaylist(for theme: Theme,
-                               sharedSeedPool: [BaseItem],
+    /// Build ONE cohesive mix anchored on a single seed artist: the artist's
+    /// own tracks plus its Last.fm-similar artists, weighted toward the anchor
+    /// so the mix stays tonally consistent (no genre whiplash) and is clearly
+    /// named after it. Pure async — safe to run concurrently with other mixes.
+    private func buildPlaylist(seed: BaseItem,
+                               themeId: String,
                                useLastFm: Bool,
                                lastFm: LastFmService?,
                                client: JellyfinClient,
                                ignore: IgnoredTracksStore,
                                today: String) async -> DailyPlaylist? {
-        do {
-            let poolForTheme: [BaseItem]
-            if !sharedSeedPool.isEmpty {
-                poolForTheme = sharedSeedPool
-            } else {
-                let pool = try await theme.fetcher(client)
-                poolForTheme = await expandToAudio(pool, client: client)
-            }
-            let seedCount = useLastFm ? 3 : 6
-            let seeds = pickDiverseSeeds(poolForTheme, count: seedCount)
-            guard !seeds.isEmpty else { return nil }
-
-            var combined: [BaseItem] = []
-            var seenIds: Set<String> = []
-            var perArtist: [String: Int] = [:]
-            let maxPerArtist = useLastFm ? 3 : 2
-
-            for seed in seeds {
-                var pool: [BaseItem] = []
-                if useLastFm, let lf = lastFm {
-                    pool = await buildLastFmInformedPool(seed: seed,
-                                                         client: client,
-                                                         lastFm: lf)
-                }
-                if pool.count < 8 {
-                    let mixRaw = (try? await client.instantMix(itemId: seed.Id, limit: 30)) ?? []
-                    let mixAudio = await expandToAudio(mixRaw, client: client)
-                    pool.append(contentsOf: mixAudio)
-                }
-                if seed.type == "Audio", seenIds.insert(seed.Id).inserted {
-                    let key = artistKey(for: seed)
-                    let c = perArtist[key] ?? 0
-                    if c < maxPerArtist {
-                        perArtist[key] = c + 1
-                        combined.append(seed)
-                    }
-                }
-                for t in pool where t.type == "Audio" && seenIds.insert(t.Id).inserted {
-                    let key = artistKey(for: t)
-                    let c = perArtist[key] ?? 0
-                    if c < maxPerArtist {
-                        perArtist[key] = c + 1
-                        combined.append(t)
-                    }
-                }
-            }
-            let allowed = ignore.filter(combined)
-            let trimmed = Array(allowed.filter { $0.type == "Audio" }.shuffled().prefix(25))
-            guard trimmed.count >= 4 else { return nil }
-            return DailyPlaylist(
-                name: theme.name,
-                theme: theme.id,
-                date: today,
-                tracks: trimmed
-            )
-        } catch is CancellationError {
-            return nil
-        } catch let err as URLError where err.code == .cancelled {
-            return nil
-        } catch {
-            await MainActor.run { self.lastError = error.localizedDescription }
-            return nil
+        var pool: [BaseItem] = []
+        if useLastFm, let lf = lastFm {
+            pool = await buildLastFmInformedPool(seed: seed, client: client, lastFm: lf)
         }
+        if pool.count < 12 {
+            // Last.fm unavailable / thin — Jellyfin's instant mix is genre &
+            // audio-feature based, so it stays in the seed's lane too.
+            let mixRaw = (try? await client.instantMix(itemId: seed.Id, limit: 40)) ?? []
+            pool += await expandToAudio(mixRaw, client: client)
+        }
+
+        let seedKey = artistKey(for: seed)
+        var combined: [BaseItem] = []
+        var seenIds: Set<String> = []
+        var perArtist: [String: Int] = [:]
+        func tryAdd(_ t: BaseItem) {
+            guard t.type == "Audio", seenIds.insert(t.Id).inserted else { return }
+            let key = artistKey(for: t)
+            // Anchor-heavy: more from the seed artist so it leads (and names) the
+            // mix; a few each from its similar artists for variety.
+            let cap = (key == seedKey) ? 5 : 3
+            let c = perArtist[key] ?? 0
+            if c < cap { perArtist[key] = c + 1; combined.append(t) }
+        }
+        tryAdd(seed)
+        for t in pool { tryAdd(t) }
+
+        let allowed = ignore.filter(combined)
+        let trimmed = Array(allowed.filter { $0.type == "Audio" }.shuffled().prefix(25))
+        guard trimmed.count >= 4 else { return nil }
+        return DailyPlaylist(
+            name: "\(seed.primaryArtistName) Mix",
+            theme: themeId,
+            date: today,
+            tracks: trimmed
+        )
     }
 
     /// Tallies appearance frequency of each primary artist in `tracks` and
@@ -338,32 +319,55 @@ public final class DailyPlaylistStore: ObservableObject {
         guard !seedArtistName.isEmpty else { return [] }
 
         var artistsToHarvest: [(id: String, name: String)] = []
+        var seenArtistIds = Set<String>()
         if let seedArtistId, !seedArtistId.isEmpty {
             artistsToHarvest.append((seedArtistId, seedArtistName))
+            seenArtistIds.insert(seedArtistId)
         }
 
-        if let similar = try? await lastFm.similarArtists(forName: seedArtistName, limit: 20) {
-            for cand in similar {
-                if artistsToHarvest.count >= 7 { break }
-                let needle = cand.name.folding(options: .diacriticInsensitive, locale: .current)
-                let hits = (try? await client.artists(search: cand.name)) ?? []
-                if let match = hits.first(where: {
-                    $0.type == "MusicArtist" &&
-                    $0.Name.folding(options: .diacriticInsensitive, locale: .current)
-                        .compare(needle, options: .caseInsensitive) == .orderedSame
-                }) {
-                    artistsToHarvest.append((match.Id, match.Name))
+        // Resolve Last.fm's similar artists against the user's library. The
+        // per-candidate Jellyfin searches run CONCURRENTLY — their network I/O
+        // overlaps on the main actor instead of running one-at-a-time, which is
+        // what made mix generation take minutes over a slow/remote link.
+        let similar = (try? await lastFm.similarArtists(forName: seedArtistName, limit: 12)) ?? []
+        let candidates = Array(similar.prefix(10))
+        let matches: [(id: String, name: String)] = await withTaskGroup(of: (Int, (id: String, name: String)?).self) { group in
+            for (i, cand) in candidates.enumerated() {
+                group.addTask { @MainActor in
+                    let needle = cand.name.folding(options: .diacriticInsensitive, locale: .current)
+                    let hits = (try? await client.artists(search: cand.name)) ?? []
+                    if let match = hits.first(where: {
+                        $0.type == "MusicArtist" &&
+                        $0.Name.folding(options: .diacriticInsensitive, locale: .current)
+                            .compare(needle, options: .caseInsensitive) == .orderedSame
+                    }) {
+                        return (i, (match.Id, match.Name))
+                    }
+                    return (i, nil)
                 }
             }
+            var found: [(Int, (id: String, name: String))] = []
+            for await (i, m) in group { if let m { found.append((i, m)) } }
+            return found.sorted { $0.0 < $1.0 }.map { $0.1 }   // preserve Last.fm rank
+        }
+        for m in matches {
+            if artistsToHarvest.count >= 7 { break }
+            if seenArtistIds.insert(m.id).inserted { artistsToHarvest.append(m) }
         }
 
-        var pool: [BaseItem] = []
-        for (id, name) in artistsToHarvest {
-            if let tracks = try? await client.topTracksForArtist(id, name: name, limit: 8) {
-                pool.append(contentsOf: tracks.filter { $0.type == "Audio" })
+        // Fetch each artist's top tracks concurrently too.
+        let pools: [[BaseItem]] = await withTaskGroup(of: [BaseItem].self) { group in
+            for (id, name) in artistsToHarvest {
+                group.addTask { @MainActor in
+                    let tracks = (try? await client.topTracksForArtist(id, name: name, limit: 8)) ?? []
+                    return tracks.filter { $0.type == "Audio" }
+                }
             }
+            var all: [[BaseItem]] = []
+            for await p in group { all.append(p) }
+            return all
         }
-        return pool
+        return pools.flatMap { $0 }
     }
 
     /// Expand a mixed pool of items (which may contain albums + tracks) into

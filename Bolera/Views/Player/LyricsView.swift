@@ -10,22 +10,28 @@ struct LyricsView: View {
     @State private var lastItemId: String?
 
     var body: some View {
-        ZStack {
-            backdrop
-            VStack(spacing: 0) {
-                header
-                if loading && lyrics.isEmpty {
-                    Spacer(); ProgressView(); Spacer()
-                } else if lyrics.isEmpty {
-                    Spacer()
-                    Text("No lyrics available for this track.")
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding()
-                    Spacer()
-                } else {
-                    lyricsScroller
+        GeometryReader { geo in
+            ZStack {
+                backdrop
+                VStack(spacing: 0) {
+                    header
+                    if loading && lyrics.isEmpty {
+                        Spacer(); ProgressView(); Spacer()
+                    } else if lyrics.isEmpty {
+                        Spacer()
+                        Text("No lyrics available for this track.")
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding()
+                        Spacer()
+                    } else {
+                        lyricsScroller
+                    }
                 }
+                // Pin the content to the sheet's real width so a long lyric line
+                // can't inflate the layout and push the header buttons off-screen
+                // while the sheet is dragged up.
+                .frame(width: geo.size.width, height: geo.size.height)
             }
         }
         .task(id: player.current?.Id) { await loadIfNeeded() }

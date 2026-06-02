@@ -887,11 +887,13 @@ private struct LyricsSheet_Mac: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
+                        LazyVStack(alignment: .center, spacing: 14) {
                             Color.clear.frame(height: 16).id("top")
                             ForEach(lyrics.lines) { line in
                                 Text(line.text.isEmpty ? "♪" : line.text)
                                     .font(.title3.weight(.semibold))
+                                    .multilineTextAlignment(.center)
+                                    .frame(maxWidth: .infinity, alignment: .center)
                                     .foregroundStyle(isCurrent(line) ? Color.primary : Color.secondary)
                                     .id(line.id)
                                     .padding(.horizontal, 16)

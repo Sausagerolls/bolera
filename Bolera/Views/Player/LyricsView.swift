@@ -11,28 +11,27 @@ struct LyricsView: View {
 
     var body: some View {
         GeometryReader { geo in
-            ZStack {
-                backdrop
-                VStack(spacing: 0) {
-                    header
-                    if loading && lyrics.isEmpty {
-                        Spacer(); ProgressView(); Spacer()
-                    } else if lyrics.isEmpty {
-                        Spacer()
-                        Text("No lyrics available for this track.")
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding()
-                        Spacer()
-                    } else {
-                        lyricsScroller
-                    }
+            VStack(spacing: 0) {
+                header
+                if loading && lyrics.isEmpty {
+                    Spacer(); ProgressView(); Spacer()
+                } else if lyrics.isEmpty {
+                    Spacer()
+                    Text("No lyrics available for this track.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding()
+                    Spacer()
+                } else {
+                    lyricsScroller
                 }
-                // Pin the content to the sheet's real width so a long lyric line
-                // can't inflate the layout and push the header buttons off-screen
-                // while the sheet is dragged up.
-                .frame(width: geo.size.width, height: geo.size.height)
             }
+            // Pin the content to the sheet's real width so a long lyric line
+            // can't inflate the layout and push the header buttons off-screen
+            // while the sheet is dragged up. backdrop is a background (not a
+            // sibling) so it doesn't expand the layout and shift the content.
+            .frame(width: geo.size.width, height: geo.size.height)
+            .background(backdrop)
         }
         .task(id: player.current?.Id) { await loadIfNeeded() }
         .onChange(of: player.current?.Id) { _, _ in

@@ -58,3 +58,6 @@ BoleraCore/Sources/BoleraCore/Services/LastFmSecrets.swift
 
 # Standalone side tool (own project)
 Tools/
+
+# Personal Jellyfin admin/helper scripts (not part of the app)
+/*.py

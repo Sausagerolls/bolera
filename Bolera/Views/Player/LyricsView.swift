@@ -90,11 +90,11 @@ struct LyricsView: View {
                     Color.clear.frame(height: 40).id("top")
                     ForEach(lyrics.lines) { line in
                         Text(line.text.isEmpty ? "♪" : line.text)
-                            .font(.title3.weight(.semibold))
+                            .font(.title3.weight(isCurrent(line) ? .bold : .semibold))
                             .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .foregroundStyle(isCurrent(line) ? Color.white : Color.white.opacity(0.45))
-                            .scaleEffect(isCurrent(line) ? 1.05 : 1.0, anchor: .center)
                             .animation(.easeInOut(duration: 0.25), value: isCurrent(line))
                             .padding(.horizontal, 24)
                             .id(line.id)

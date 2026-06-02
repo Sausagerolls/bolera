@@ -891,8 +891,9 @@ private struct LyricsSheet_Mac: View {
                             Color.clear.frame(height: 16).id("top")
                             ForEach(lyrics.lines) { line in
                                 Text(line.text.isEmpty ? "♪" : line.text)
-                                    .font(.title3.weight(.semibold))
+                                    .font(.title3.weight(isCurrent(line) ? .bold : .semibold))
                                     .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .foregroundStyle(isCurrent(line) ? Color.primary : Color.secondary)
                                     .id(line.id)

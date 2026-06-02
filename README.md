@@ -2,27 +2,25 @@
 
 A native music client for [Jellyfin](https://jellyfin.org), built for macOS and iOS.
 
-Bolera is a fully native SwiftUI app — no Catalyst, no web wrappers — that turns a self-hosted Jellyfin server into a polished, day-to-day music player. Daily themed mixes, a real 10-band EQ, Last.fm-powered similar artists and bios, offline downloads with automatic container detection, and a sidebar / now-playing experience designed for music listeners.
+Bolera is a fully native SwiftUI app — no Catalyst, no web wrappers — that turns a self-hosted Jellyfin server into a polished, day-to-day music player. Daily themed mixes, mood-based Make-a-Mix, a real 10-band EQ, time-synced lyrics (auto-fetched when your server has none), Last.fm-powered similar artists and bios, offline downloads with automatic container detection, CarPlay, and a sidebar / now-playing experience designed for music listeners.
 
-> **Status:** Pre-launch. Source is published for transparency and community feedback.
-> Bolera is intended to ship via the App Store and Mac App Store.
+> **Status:** Submitted to the App Store and Mac App Store — launching soon. Source is published for transparency and community feedback.
 
 ## Project layout
 
 ```
 Bolera/                 # iOS app target (SwiftUI)
 Bolera-mac/             # macOS app target (SwiftUI, native — not Catalyst)
+Bolera/CarPlay/         # CarPlay scene + templates (iOS)
 BoleraCore/             # Shared Swift Package: networking, audio, models, stores
 Bolera.xcodeproj/       # Combined Xcode project (both targets + the package)
-marketing/              # Static marketing site (HTML/CSS/JS)
-*.py                    # One-off Jellyfin maintenance helper scripts
 ```
 
 The two app targets share **BoleraCore**, a local Swift package containing:
 
 - `Networking/` — `JellyfinClient`, `AuthManager`
 - `Audio/` — `AudioPlayer` (AVPlayer-backed), `AudioProcessor` (10-band biquad EQ via `MTAudioProcessingTap`)
-- `Services/` — `LastFmService` (scrobble + similar-artist lookups), `SleepTimer`, `LyricsService`
+- `Services/` — `LastFmService` (scrobble + similar-artist lookups), `LyricsService` (server lyrics with LRCLIB fallback), `SleepTimer`
 - `Library/` — `LibraryStore`, `DownloadManager`, `DailyPlaylistStore`, `PinnedItemsStore`
 - `Pro/` — `ProEntitlementStore` (StoreKit 2), library-visibility / ignored-track toggles, iCloud KVS sync
 - `Models/` — `BaseItem` + Jellyfin response decoders
@@ -77,9 +75,8 @@ A one-time `$4.99` non-consumable In-App Purchase unlocks:
 - Ignored-tracks list (auto-skip the cursed ones)
 - Sidebar pinning of artists and albums
 - iCloud KVS sync of the above across devices
-- (Planned) CarPlay
 
-Pro state syncs via iCloud KVS so a purchase on iOS unlocks on Mac and vice versa.
+CarPlay is supported on iOS. Pro state syncs via iCloud KVS so a purchase on iOS unlocks on Mac and vice versa.
 
 ## License
 

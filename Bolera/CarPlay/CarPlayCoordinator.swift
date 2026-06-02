@@ -505,10 +505,12 @@ final class CarPlayCoordinator {
         radioRow.handler = { [weak self] _, completion in
             Task { @MainActor in
                 if let client = self?.client,
-                   let mix = try? await client.instantMix(itemId: artist.Id),
-                   !mix.isEmpty {
-                    AudioPlayer.shared.play(items: mix)
-                    self?.pushNowPlaying()
+                   let mix = try? await client.instantMix(itemId: artist.Id) {
+                    let filtered = LiveFilterStore.shared.filter(mix)
+                    if !filtered.isEmpty {
+                        AudioPlayer.shared.play(items: filtered)
+                        self?.pushNowPlaying()
+                    }
                 }
                 completion()
             }

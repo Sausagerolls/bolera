@@ -159,6 +159,8 @@ private struct GeneralSettings_Mac: View {
 
 private struct PlaybackSettings_Mac: View {
     @EnvironmentObject var player: AudioPlayer
+    @EnvironmentObject var auth: AuthManager
+    @ObservedObject private var live = LiveFilterStore.shared
     @Environment(\.openWindow) private var openWindow
     @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
 
@@ -185,9 +187,24 @@ private struct PlaybackSettings_Mac: View {
                 Text("Make-a-Mix uses Apple Intelligence to turn a mood phrase into a playlist. Last.fm sign-in dramatically improves results.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Mixes & Radio") {
+                Toggle("Exclude Live Recordings", isOn: $live.enabled)
+                    .onChange(of: live.enabled) { _, _ in refreshLiveAlbums() }
+                if live.enabled {
+                    TextField("Live tag", text: $live.tag)
+                        .onSubmit { refreshLiveAlbums() }
+                }
+                Text("Keeps live recordings out of daily mixes, Make-a-Mix, and radio — detected by name and by the tag/genre above. Doesn't affect browsing or playing an album directly.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    private func refreshLiveAlbums() {
+        guard let url = auth.serverURL else { return }
+        Task { await LiveFilterStore.shared.refresh(client: JellyfinClient(baseURL: url, auth: auth)) }
     }
 }
 

@@ -571,8 +571,9 @@ final class MoodMixGenerator {
         }
 
         // Drop tracks the user has explicitly ignored (or any track whose
-        // artist or album sits on the ignore lists).
-        combined = IgnoredTracksStore.shared.filter(combined)
+        // artist or album sits on the ignore lists), and live recordings when
+        // the user has chosen to exclude them.
+        combined = LiveFilterStore.shared.filter(IgnoredTracksStore.shared.filter(combined))
 
         // Optional decade filter — only apply if it leaves a healthy pool
         // AND doesn't shrink the result by more than 60%. Decade is a soft

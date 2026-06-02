@@ -326,9 +326,9 @@ struct ArtistDetailView: View {
                 var seen = Set(mix.map { $0.Id })
                 mix.append(contentsOf: fallback.filter { seen.insert($0.Id).inserted })
             }
-            let final = Array(mix.prefix(100))
             await MainActor.run {
                 isBuildingRadio = false
+                let final = Array(LiveFilterStore.shared.filter(mix).prefix(100))
                 if !final.isEmpty { AudioPlayer.shared.play(items: final) }
             }
         }

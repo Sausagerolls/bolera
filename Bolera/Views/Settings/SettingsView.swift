@@ -5,6 +5,7 @@ struct SettingsView: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var pro: ProEntitlementStore
     @ObservedObject private var prefetcher = LibraryPrefetcher.shared
+    @ObservedObject private var live = LiveFilterStore.shared
     @AppStorage("bolera.maxBitrate") private var maxBitrate: Int = 320
     @State private var cacheSizeText: String = "—"
     @State private var clearingCache = false
@@ -93,6 +94,28 @@ struct SettingsView: View {
                     .font(.caption)
             }
 
+            Section {
+                Toggle("Exclude Live Recordings", isOn: $live.enabled)
+                    .onChange(of: live.enabled) { _, _ in refreshLiveAlbums() }
+                if live.enabled {
+                    HStack {
+                        Text("Live Tag")
+                        Spacer()
+                        TextField("Live", text: $live.tag)
+                            .multilineTextAlignment(.trailing)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .frame(maxWidth: 160)
+                            .onSubmit { refreshLiveAlbums() }
+                    }
+                }
+            } header: {
+                Text("Mixes & Radio")
+            } footer: {
+                Text("Keeps live recordings out of daily mixes, Make-a-Mix, and radio. Detected by name (e.g. \"(Live)\", \"Unplugged\") and by the tag or genre above — set it to whatever you tag your live albums with on the server. Doesn't affect browsing or playing an album directly.")
+                    .font(.caption)
+            }
+
             Section("Bolera Pro") {
                 if pro.isPro {
                     HStack {
@@ -158,6 +181,13 @@ struct SettingsView: View {
             NavigationStack { PaywallView() }
                 .environmentObject(pro)
         }
+    }
+
+    /// Re-fetch the set of live-tagged albums after the toggle/tag changes so
+    /// the exclusion reflects the new setting immediately.
+    private func refreshLiveAlbums() {
+        guard let url = auth.serverURL else { return }
+        Task { await LiveFilterStore.shared.refresh(client: JellyfinClient(baseURL: url, auth: auth)) }
     }
 
     private func refreshCacheSize() {

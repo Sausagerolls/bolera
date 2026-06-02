@@ -143,3 +143,75 @@ public final class IgnoredTracksStore: ObservableObject {
         CloudKVS.synchronize()
     }
 }
+
+/// Optionally excludes LIVE recordings from generated content (daily mixes,
+/// Make-a-Mix, artist/track radio). A track is treated as live when its title
+/// or album name looks live (heuristic) OR its album carries the user's chosen
+/// "live" tag/genre on the server. The tag is user-configurable so it matches
+/// however they label live albums in their own library. Filtering is purely
+/// subtractive — it never affects normal browsing or direct playback.
+@MainActor
+public final class LiveFilterStore: ObservableObject {
+    public static let shared = LiveFilterStore()
+
+    /// Master switch. Off by default.
+    @Published public var enabled: Bool {
+        didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey) }
+    }
+    /// Tag/genre the user applies to live albums on their server (default "Live").
+    @Published public var tag: String {
+        didSet { UserDefaults.standard.set(tag, forKey: Self.tagKey) }
+    }
+    /// Album IDs carrying `tag`, fetched from the server. Cached to disk.
+    @Published public private(set) var liveAlbumIds: Set<String>
+
+    private static let enabledKey = "bolera.live.exclude"
+    private static let tagKey     = "bolera.live.tag"
+    private static let albumsKey  = "bolera.live.albumIds"
+
+    private init() {
+        enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
+        tag = UserDefaults.standard.string(forKey: Self.tagKey) ?? "Live"
+        liveAlbumIds = Set(UserDefaults.standard.stringArray(forKey: Self.albumsKey) ?? [])
+    }
+
+    /// Re-fetch the set of live-tagged album IDs from the server. Call when
+    /// online (and after the tag/toggle changes). No-op when disabled.
+    public func refresh(client: JellyfinClient) async {
+        guard enabled else { return }
+        let ids = await client.albumIds(taggedOrGenred: tag)
+        guard !ids.isEmpty || liveAlbumIds.isEmpty == false else { return }
+        liveAlbumIds = ids
+        UserDefaults.standard.set(Array(ids), forKey: Self.albumsKey)
+    }
+
+    /// Remove live tracks from `items` when enabled; pass-through otherwise.
+    public func filter(_ items: [BaseItem]) -> [BaseItem] {
+        guard enabled else { return items }
+        return items.filter { !isLive($0) }
+    }
+
+    public func isLive(_ item: BaseItem) -> Bool {
+        guard enabled else { return false }
+        if Self.nameLooksLive(item.Name) { return true }
+        if let al = item.Album, Self.nameLooksLive(al) { return true }
+        if let aid = item.AlbumId, liveAlbumIds.contains(aid) { return true }
+        if liveAlbumIds.contains(item.Id) { return true }   // the item is itself the tagged album
+        return false
+    }
+
+    /// Heuristic: does a track/album title read as a live recording? Tuned to
+    /// avoid common false positives ("Alive", "Living…", the band Live, "Live
+    /// and Let Die" — none contain these delimited markers).
+    static func nameLooksLive(_ s: String) -> Bool {
+        let l = s.lowercased()
+        if l.contains("(live") || l.contains("[live") { return true }
+        if l.contains(" - live") || l.contains(" – live") || l.contains(": live") { return true }
+        for kw in ["unplugged", "in concert", "live at ", "live from ", "live in ",
+                   "live on ", "live session", "live version", "live recording",
+                   "live bootleg", "live concert", "mtv unplugged"] {
+            if l.contains(kw) { return true }
+        }
+        return false
+    }
+}

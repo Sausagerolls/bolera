@@ -388,6 +388,19 @@ public struct JellyfinClient {
         }
     }
 
+    /// IDs of MusicAlbums carrying `tag` as either a Tag or a Genre. Used to
+    /// exclude live recordings from generated mixes: the user tags/genres their
+    /// live albums on the server, we fetch those album IDs once, and tracks whose
+    /// AlbumId is in the set are filtered out. Empty tag → empty set.
+    public func albumIds(taggedOrGenred tag: String) async -> Set<String> {
+        let t = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return [] }
+        async let byTag = (try? albumsQuery(params: [("Tags", t)])) ?? []
+        async let byGenre = (try? albumsQuery(params: [("Genres", t)])) ?? []
+        let albums = await byTag + byGenre
+        return Set(albums.map { $0.Id })
+    }
+
     private func albumsQuery(params: [(String, String)]) async throws -> [BaseItem] {
         var q: [URLQueryItem] = [
             URLQueryItem(name: "IncludeItemTypes", value: "MusicAlbum"),

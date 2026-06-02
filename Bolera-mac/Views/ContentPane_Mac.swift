@@ -1788,7 +1788,7 @@ final class MoodMixGenerator_Mac {
             print("[MoodMix-Mac] Last.fm tag-tracks pool: \(viaTracks.count)")
         }
 
-        combined = IgnoredTracksStore.shared.filter(combined)
+        combined = LiveFilterStore.shared.filter(IgnoredTracksStore.shared.filter(combined))
 
         if let range = decadeRange(analysis.decade) {
             let filtered = combined.filter { ($0.ProductionYear).map(range.contains) ?? false }

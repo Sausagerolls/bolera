@@ -262,7 +262,7 @@ struct ArtistDetail_Mac: View {
         if let mix = try? await client.instantMix(itemId: current.Id, limit: 80) {
             var tracks = mix.filter { $0.type == "Audio" }
             if shuffle { tracks.shuffle() }
-            await MainActor.run { player.play(items: tracks) }
+            await MainActor.run { player.play(items: LiveFilterStore.shared.filter(tracks)) }
         }
     }
 

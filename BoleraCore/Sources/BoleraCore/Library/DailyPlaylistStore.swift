@@ -143,6 +143,9 @@ public final class DailyPlaylistStore: ObservableObject {
         // awaits overlap, so wall time ≈ a single mix's.
         let seeds = pickDiverseSeeds(seedPool, count: themes.count)
         guard !seeds.isEmpty else { return }
+        // Refresh the live-album set so the live filter (applied per mix below)
+        // reflects the user's current tag.
+        await LiveFilterStore.shared.refresh(client: client)
         let snapshotIgnore = IgnoredTracksStore.shared
         var built = await withTaskGroup(of: (Int, DailyPlaylist?).self) { group -> [DailyPlaylist] in
             for (idx, seed) in seeds.enumerated() {
@@ -221,7 +224,7 @@ public final class DailyPlaylistStore: ObservableObject {
         tryAdd(seed)
         for t in pool { tryAdd(t) }
 
-        let allowed = ignore.filter(combined)
+        let allowed = LiveFilterStore.shared.filter(ignore.filter(combined))
         let trimmed = Array(allowed.filter { $0.type == "Audio" }.shuffled().prefix(25))
         guard trimmed.count >= 4 else { return nil }
         return DailyPlaylist(
@@ -269,7 +272,7 @@ public final class DailyPlaylistStore: ObservableObject {
         var seen = existing
         var perArtist: [String: Int] = [:]
         var out: [BaseItem] = []
-        for t in ignore.filter(pool).shuffled() where t.type == "Audio" {
+        for t in LiveFilterStore.shared.filter(ignore.filter(pool)).shuffled() where t.type == "Audio" {
             guard seen.insert(t.Id).inserted else { continue }
             let k = artistKey(for: t)
             let cap = (k == seedKey) ? 4 : 3

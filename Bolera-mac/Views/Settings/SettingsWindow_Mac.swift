@@ -204,7 +204,11 @@ private struct PlaybackSettings_Mac: View {
 
     private func refreshLiveAlbums() {
         guard let url = auth.serverURL else { return }
-        Task { await LiveFilterStore.shared.refresh(client: JellyfinClient(baseURL: url, auth: auth)) }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        Task {
+            await LiveFilterStore.shared.refresh(client: client)
+            await DailyPlaylistStore.shared.regenerate(client: client, auth: auth, lastFm: LastFmService.shared)
+        }
     }
 }
 

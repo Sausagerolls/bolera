@@ -187,7 +187,13 @@ struct SettingsView: View {
     /// the exclusion reflects the new setting immediately.
     private func refreshLiveAlbums() {
         guard let url = auth.serverURL else { return }
-        Task { await LiveFilterStore.shared.refresh(client: JellyfinClient(baseURL: url, auth: auth)) }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        Task {
+            await LiveFilterStore.shared.refresh(client: client)
+            // Rebuild today's daily mixes so the change applies now (Make-a-Mix
+            // and radio already filter on their next run).
+            await DailyPlaylistStore.shared.regenerate(client: client, auth: auth, lastFm: LastFmService.shared)
+        }
     }
 
     private func refreshCacheSize() {

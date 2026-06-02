@@ -55,3 +55,6 @@ secrets.json
 
 # Last.fm app credentials — see LastFmSecrets.swift.example for setup
 BoleraCore/Sources/BoleraCore/Services/LastFmSecrets.swift
+
+# Standalone side tool (own project)
+Tools/

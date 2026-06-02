@@ -931,7 +931,7 @@ private struct LyricsSheet_Mac: View {
         lastItemId = item.Id
         loading = true
         let client = JellyfinClient(baseURL: url, auth: auth)
-        let result = (try? await client.lyrics(for: item.Id)) ?? .empty
+        let result = (try? await client.lyrics(for: item)) ?? .empty
         await MainActor.run {
             self.lyrics = result
             self.loading = false

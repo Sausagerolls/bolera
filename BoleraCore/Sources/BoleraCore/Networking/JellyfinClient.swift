@@ -1,13 +1,82 @@
 import Foundation
 
+/// Caches the resolved IPv4 of a `.local` (mDNS / Bonjour) server host. `.local`
+/// names only resolve on the home LAN, so off-network (Tailscale, other Wi-Fi,
+/// cellular) the app can't connect. We resolve it while at home and reuse the
+/// IP everywhere after — the user's configured address stays `baldur.local`;
+/// the app just connects by the cached IP, which is reachable over Tailscale.
+enum ServerHostCache {
+    static func cachedIP(for host: String) -> String? {
+        UserDefaults.standard.string(forKey: "bolera.hostip.\(host)")
+    }
+
+    /// Resolve `name` to an IPv4 and, on success, cache it under `key`. BLOCKING
+    /// (getaddrinfo) — call off the main thread. Returns whether it resolved.
+    @discardableResult
+    static func tryResolve(_ name: String, key: String) -> Bool {
+        var hints = addrinfo()
+        hints.ai_family = AF_INET
+        hints.ai_socktype = SOCK_STREAM
+        var res: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(name, nil, &hints, &res) == 0 else { return false }
+        defer { freeaddrinfo(res) }
+        var node = res
+        while let cur = node {
+            if cur.pointee.ai_family == AF_INET, let sa = cur.pointee.ai_addr {
+                var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
+                    var addr = sin.pointee.sin_addr
+                    inet_ntop(AF_INET, &addr, &buf, socklen_t(INET_ADDRSTRLEN))
+                }
+                let ip = String(cString: buf)
+                if !ip.isEmpty, ip != "0.0.0.0" {
+                    UserDefaults.standard.set(ip, forKey: "bolera.hostip.\(key)")
+                    DebugLog.write("[Host] resolved \(name) -> \(ip) (for \(key))")
+                    return true
+                }
+            }
+            node = cur.pointee.ai_next
+        }
+        return false
+    }
+
+    /// Resolve the configured server host (if it's a `.local` name) in the
+    /// background and cache its IP. Tries the `.local` mDNS name (resolves on the
+    /// home LAN) and, if that fails, the bare machine name — which Tailscale
+    /// MagicDNS may resolve off-network, so it can work out-of-the-box when away
+    /// without a prior home session. No-op for IPs / non-.local hostnames.
+    static func refreshIfLocal() {
+        guard let host = AuthManager.shared.serverURL?.host, host.hasSuffix(".local") else { return }
+        let bare = String(host.dropLast(".local".count))
+        DispatchQueue.global(qos: .utility).async {
+            if !tryResolve(host, key: host), !bare.isEmpty {
+                tryResolve(bare, key: host)
+            }
+        }
+    }
+}
+
 /// Thin wrapper around the Jellyfin REST API.
 public struct JellyfinClient {
-    public let baseURL: URL
+    private let configuredBaseURL: URL
     public unowned let auth: AuthManager
 
     public init(baseURL: URL, auth: AuthManager) {
-        self.baseURL = baseURL
+        self.configuredBaseURL = baseURL
         self.auth = auth
+    }
+
+    /// Base URL used for all requests. A `.local` host is swapped for its cached
+    /// resolved IP (works over Tailscale, unlike the mDNS name); everything else
+    /// passes through unchanged.
+    public var baseURL: URL { Self.resolvedURL(configuredBaseURL) }
+
+    static func resolvedURL(_ url: URL) -> URL {
+        guard let host = url.host, host.hasSuffix(".local"),
+              let ip = ServerHostCache.cachedIP(for: host),
+              var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        comps.host = ip
+        return comps.url ?? url
     }
 
     /// Dedicated session for JSON API calls. A 15s idle timeout (vs

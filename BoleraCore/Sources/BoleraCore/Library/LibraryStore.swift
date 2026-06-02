@@ -246,9 +246,14 @@ public final class ConnectivityStore: ObservableObject {
         #if canImport(UIKit) || canImport(AppKit)
         NotificationCenter.default.addObserver(forName: didBecomeActive,
                                                object: nil, queue: .main) { [weak self] _ in
+            // Refresh the cached server IP (resolves while at home) and re-probe.
+            ServerHostCache.refreshIfLocal()
             Task { @MainActor in self?.recheckNow() }
         }
         #endif
+        // Resolve the server host's IP at launch too — caches it whenever we're
+        // on the home network so a `.local` server is reachable off-network.
+        ServerHostCache.refreshIfLocal()
     }
 
     /// Re-probe the server immediately if we believe we're offline. Called on
@@ -368,7 +373,10 @@ public final class ConnectivityStore: ObservableObject {
     /// genuinely unreachable over cellular — this correctly stays offline there.
     static func serverReachable(base: URL?) async -> Bool {
         guard let base else { return false }
-        var req = URLRequest(url: base.appendingPathComponent("System/Info/Public"))
+        // Probe the resolved IP for a `.local` host (mDNS doesn't resolve off
+        // the home LAN, but the cached IP does over Tailscale).
+        let target = JellyfinClient.resolvedURL(base)
+        var req = URLRequest(url: target.appendingPathComponent("System/Info/Public"))
         req.timeoutInterval = 6
         req.cachePolicy = .reloadIgnoringLocalCacheData
         // Fresh ephemeral session per probe: no connection pooling, so the probe

@@ -61,3 +61,6 @@ Tools/
 
 # Personal Jellyfin admin/helper scripts (not part of the app)
 /*.py
+
+# Marketing site — deployed separately, not part of the app
+marketing/

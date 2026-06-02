@@ -688,10 +688,8 @@ public struct JellyfinClient {
     /// AVPlayer's MTAudioProcessingTap (the visualizer + EQ) to enumerate audio
     /// tracks — Jellyfin's `/universal` transcoded stream returns 0 tracks to
     /// AVAsset and silently disables the tap.
-    /// Direct, full-quality stream (no transcode) — used for both playback and
-    /// downloads. AVPlayer natively decodes the library's formats (FLAC / MP3 /
-    /// AAC), so there's no reason to transcode; on a LAN this is the lowest-
-    /// latency path.
+    /// Direct, full-quality stream (no transcode). Used for DOWNLOADS (always
+    /// lossless) and for playback on Wi-Fi/LAN.
     public func audioStreamURL(for itemId: String) -> URL {
         guard var comps = URLComponents(url: baseURL.appendingPathComponent("Audio/\(itemId)/stream"), resolvingAgainstBaseURL: false) else {
             return baseURL
@@ -701,6 +699,34 @@ public struct JellyfinClient {
             URLQueryItem(name: "api_key", value: auth.accessToken ?? "")
         ]
         return comps.url ?? baseURL
+    }
+
+    /// Stream URL for PLAYBACK. On Wi-Fi/LAN it's the direct original (full
+    /// quality, lowest latency). On a METERED path (cellular / hotspot, e.g.
+    /// Tailscale over cellular) where the full FLAC stalls, it uses Jellyfin's
+    /// universal endpoint to PROGRESSIVE-transcode down to the user's max
+    /// bitrate — much less data, so it actually plays. Progressive (not HLS)
+    /// keeps the EQ tap working. Downloads always use `audioStreamURL`.
+    public func playbackStreamURL(for itemId: String) -> URL {
+        let maxKbps = UserDefaults.standard.object(forKey: "bolera.maxBitrate") as? Int ?? 320
+        guard ConnectivityStore.pathIsExpensive, maxKbps < 1411 else {
+            return audioStreamURL(for: itemId)
+        }
+        guard var comps = URLComponents(url: baseURL.appendingPathComponent("Audio/\(itemId)/universal"), resolvingAgainstBaseURL: false) else {
+            return audioStreamURL(for: itemId)
+        }
+        comps.queryItems = [
+            URLQueryItem(name: "UserId", value: auth.userId ?? ""),
+            URLQueryItem(name: "DeviceId", value: AuthManager.deviceId),
+            URLQueryItem(name: "MaxStreamingBitrate", value: String(maxKbps * 1000)),
+            URLQueryItem(name: "Container", value: "mp3,aac,m4a,flac,alac,wav,ogg,opus,webma"),
+            URLQueryItem(name: "TranscodingContainer", value: "mp3"),
+            URLQueryItem(name: "TranscodingProtocol", value: "http"),
+            URLQueryItem(name: "AudioCodec", value: "mp3"),
+            URLQueryItem(name: "EnableRedirection", value: "true"),
+            URLQueryItem(name: "api_key", value: auth.accessToken ?? "")
+        ]
+        return comps.url ?? audioStreamURL(for: itemId)
     }
 
     /// Primary image URL for an item. Falls back to album art if the item has no primary tag.

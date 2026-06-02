@@ -423,9 +423,9 @@ public final class AudioPlayer: NSObject, ObservableObject {
             if let local = DownloadManager.shared.localFileURL(for: item.Id) {
                 url = local
             } else if let client = client {
-                url = client.audioStreamURL(for: item.Id)
+                url = client.playbackStreamURL(for: item.Id)
             } else { return }
-            NSLog("[AudioPlayer] load '\(item.Name)' src=\(url.isFileURL ? "local" : "stream") \(url.absoluteString)")
+            DebugLog.write("[AudioPlayer] load '\(item.Name)' src=\(url.isFileURL ? "local" : "stream") \(url.absoluteString)")
             asset = AVURLAsset(url: url)
         }
         let playerItem = AVPlayerItem(asset: asset)
@@ -636,7 +636,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         if let local = DownloadManager.shared.localFileURL(for: nextItem.Id) {
             url = local
         } else if let client = client {
-            url = client.audioStreamURL(for: nextItem.Id)
+            url = client.playbackStreamURL(for: nextItem.Id)
         } else { return }
 
         let asset = AVURLAsset(url: url)
@@ -771,7 +771,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             if let local = DownloadManager.shared.localFileURL(for: item.Id) {
                 url = local
             } else if let client = client {
-                url = client.audioStreamURL(for: item.Id)
+                url = client.playbackStreamURL(for: item.Id)
             } else { continue }
             let opts: [String: Any] = [AVURLAssetPreferPreciseDurationAndTimingKey: false]
             let asset = AVURLAsset(url: url, options: opts)
@@ -858,7 +858,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 // Diagnostics for the "audio cut out, 30s gap on a fast LAN"
                 // stalls — reasonForWaitingToPlay says WHY (e.g. .toMinimizeStalls
                 // = waiting on data), plus the buffer flags + any item error.
-                NSLog("[AudioPlayer] STALL '\(self.current?.Name ?? "?")' reason=\(player.reasonForWaitingToPlay?.rawValue ?? "nil") bufferEmpty=\(item.isPlaybackBufferEmpty) likelyToKeepUp=\(item.isPlaybackLikelyToKeepUp) bufferFull=\(item.isPlaybackBufferFull) error=\(item.error.map { String(describing: $0) } ?? "none")")
+                DebugLog.write("[AudioPlayer] STALL '\(self.current?.Name ?? "?")' reason=\(player.reasonForWaitingToPlay?.rawValue ?? "nil") bufferEmpty=\(item.isPlaybackBufferEmpty) likelyToKeepUp=\(item.isPlaybackLikelyToKeepUp) bufferFull=\(item.isPlaybackBufferFull) error=\(item.error.map { String(describing: $0) } ?? "none")")
             }
             // .paused means actually paused; .playing and .waiting both mean the
             // user intends playback (a stall isn't a pause).

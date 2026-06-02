@@ -7,6 +7,32 @@ import UIKit
 import AppKit
 #endif
 
+/// Tiny append-only debug log written to the app's Documents directory, so
+/// diagnostics survive a trip (device off-USB) and can be pulled afterwards
+/// with `devicectl device copy from`. Also NSLogs. iOS 17+ devices don't stream
+/// to idevicesyslog, so a file is the only reliable capture.
+public enum DebugLog {
+    private static let q = DispatchQueue(label: "bolera.debuglog")
+    public static let url: URL = {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return dir.appendingPathComponent("bolera-debug.log")
+    }()
+    public static func write(_ msg: String) {
+        NSLog("%@", msg)
+        q.async {
+            let line = "\(Date()) \(msg)\n"
+            guard let data = line.data(using: .utf8) else { return }
+            if let h = try? FileHandle(forWritingTo: url) {
+                defer { try? h.close() }
+                h.seekToEndOfFile()
+                h.write(data)
+            } else {
+                try? data.write(to: url)
+            }
+        }
+    }
+}
+
 /// Disk cache for library lists (artists, albums, playlists, home sections).
 /// Used to show data instantly on view appear, then refresh in background.
 /// Lives here (not its own file) because Xcode flat-pbxproj sometimes drops
@@ -170,9 +196,17 @@ public final class ConnectivityStore: ObservableObject {
     private var pendingOfflineTask: Task<Void, Never>?
     private var pathSatisfied = true
 
+    /// True when the current network path is metered (cellular / hotspot) or in
+    /// Low Data Mode — read synchronously when building a stream URL so we can
+    /// transcode down over those links but keep full quality on Wi-Fi/LAN.
+    nonisolated(unsafe) public static var pathIsExpensive = false
+
     public init() {
         monitor.pathUpdateHandler = { [weak self] path in
             let satisfied = path.status == .satisfied
+            let expensive = path.isExpensive || path.isConstrained
+            ConnectivityStore.pathIsExpensive = expensive
+            DebugLog.write("[Connectivity] path satisfied=\(satisfied) expensive=\(path.isExpensive) constrained=\(path.isConstrained) ifaces=\(path.availableInterfaces.map { $0.type })")
             Task { @MainActor in
                 guard let self else { return }
                 self.pathSatisfied = satisfied
@@ -223,7 +257,7 @@ public final class ConnectivityStore: ObservableObject {
     /// the app after being out of range.
     public func recheckNow() {
         guard !isOnline else { return }
-        NSLog("[Connectivity] foreground — recreating session + re-probing")
+        DebugLog.write("[Connectivity] foreground — recreating session + re-probing")
         // Recreate the API session so a fresh probe (and the refresh that
         // follows recovery) don't reuse connections that went stale while we
         // were out — the thing that previously needed an app reboot to clear.
@@ -237,7 +271,7 @@ public final class ConnectivityStore: ObservableObject {
     /// is unreachable the next failed request just flips back offline. Mirrors
     /// what an app reboot did, without the reboot.
     public func forceReconnect() {
-        NSLog("[Connectivity] manual reconnect requested")
+        DebugLog.write("[Connectivity] manual reconnect requested")
         JellyfinClient.resetSession()
         stopProbing()
         isOnline = true
@@ -272,7 +306,7 @@ public final class ConnectivityStore: ObservableObject {
 
     /// Flip offline and start re-probing the server until it answers.
     private func goOffline() {
-        if isOnline { NSLog("[Connectivity] → offline"); isOnline = false }
+        if isOnline { DebugLog.write("[Connectivity] → offline"); isOnline = false }
         startProbe(immediate: false)
     }
 
@@ -288,7 +322,7 @@ public final class ConnectivityStore: ObservableObject {
                 if Task.isCancelled { return }
                 let base = self?.serverBase ?? nil
                 let reachable = await Self.serverReachable(base: base)
-                NSLog("[Connectivity] probe reachable=\(reachable)")
+                DebugLog.write("[Connectivity] probe reachable=\(reachable)")
                 if reachable {
                     self?.recoverOnline()
                     return
@@ -303,7 +337,7 @@ public final class ConnectivityStore: ObservableObject {
     private func recoverOnline() {
         probeTask = nil
         if !isOnline {
-            NSLog("[Connectivity] → online (server answered probe)")
+            DebugLog.write("[Connectivity] → online (server answered probe)")
             isOnline = true
             reconnect.send()
         }

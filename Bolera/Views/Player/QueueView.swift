@@ -60,6 +60,11 @@ struct QueueView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
+                    // QueueView observes AudioPlayer, so it re-renders every
+                    // ~0.5s while currentTime ticks. With the menu open that
+                    // re-render animated the menu text (visible "pulsing").
+                    // Disable implicit animations for this subtree.
+                    .transaction { $0.animation = nil }
                 }
             }
             .sheet(isPresented: $showSaveSheet) {

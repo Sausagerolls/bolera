@@ -206,6 +206,7 @@ struct ArtistsView: View {
     @State private var items: [BaseItem] = []
     @State private var loading = false
     @State private var activeScrubLetter: String?
+    @State private var scrollTarget: String?
 
     // Three flexible columns (fixed, not adaptive) so cell widths are
     // deterministic — same stable-layout reasoning as AlbumsView.
@@ -213,52 +214,53 @@ struct ArtistsView: View {
     private let cacheKey = "artists"
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ZStack(alignment: .trailing) {
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 18) {
-                        ForEach(items) { artist in
-                            NavigationLink(value: artist) {
-                                VStack(spacing: 6) {
-                                    Color.clear
-                                        .aspectRatio(1, contentMode: .fit)
-                                        .overlay(
-                                            JellyfinImage(itemId: artist.Id, tag: artist.ImageTags?["Primary"], maxWidth: 300, cornerRadius: 200)
-                                        )
-                                    Text(artist.Name).font(.subheadline).lineLimit(1).multilineTextAlignment(.center)
-                                    if let count = artist.AlbumCount {
-                                        Text("\(count) album\(count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
-                                    }
+        ZStack(alignment: .trailing) {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 18) {
+                    ForEach(items) { artist in
+                        NavigationLink(value: artist) {
+                            VStack(spacing: 6) {
+                                Color.clear
+                                    .aspectRatio(1, contentMode: .fit)
+                                    .overlay(
+                                        JellyfinImage(itemId: artist.Id, tag: artist.ImageTags?["Primary"], maxWidth: 300, cornerRadius: 200)
+                                    )
+                                Text(artist.Name).font(.subheadline).lineLimit(1).multilineTextAlignment(.center)
+                                if let count = artist.AlbumCount {
+                                    Text("\(count) album\(count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                                 }
                             }
-                            .buttonStyle(.plain)
-                            .id(artist.Id)
-                            .contextMenu {
-                                IgnoreArtistToggleButton(item: artist)
-                            }
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            IgnoreArtistToggleButton(item: artist)
                         }
                     }
-                    .padding()
-                    Color.clear.frame(height: 100)
                 }
-                .scrollContentBackground(.hidden)
-                .overlay { if loading && items.isEmpty { ProgressView() } }
-
-                LetterIndex(letters: LibraryView.indexLetters(for: items), onLetterTap: { letter in
-                    if let target = items.first(where: { LibraryView.indexLetter(for: $0.Name) == letter }) {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            proxy.scrollTo(target.Id, anchor: .top)
-                        }
-                    }
-                }, onActiveChange: { letter in
-                    activeScrubLetter = letter
-                })
-                .padding(.trailing, 4)
-
-                LetterScrubOverlay(letter: activeScrubLetter)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                    .allowsHitTesting(false)
+                .padding()
+                Color.clear.frame(height: 100)
             }
+            // Modern scroll API — survives in-flight momentum, unlike
+            // ScrollViewReader.scrollTo which the deceleration animation
+            // swallowed (scrubber did nothing while the list was still moving).
+            .scrollPosition(id: $scrollTarget, anchor: .top)
+            .scrollContentBackground(.hidden)
+            .overlay { if loading && items.isEmpty { ProgressView() } }
+
+            LetterIndex(letters: LibraryView.indexLetters(for: items), onLetterTap: { letter in
+                if let target = items.first(where: { LibraryView.indexLetter(for: $0.Name) == letter }) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        scrollTarget = target.Id
+                    }
+                }
+            }, onActiveChange: { letter in
+                activeScrubLetter = letter
+            })
+            .padding(.trailing, 4)
+
+            LetterScrubOverlay(letter: activeScrubLetter)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .allowsHitTesting(false)
         }
         .navigationDestination(for: BaseItem.self) { item in
             switch item.type {

@@ -158,17 +158,10 @@ struct SongRow: View {
     let index: Int
     let song: BaseItem
     let action: () -> Void
-    /// When true, the context menu offers "Go to Album" (hidden on the album's
-    /// own page where it would be redundant).
-    var showGoToAlbum: Bool = false
 
     @EnvironmentObject private var auth: AuthManager
     @State private var showPlaylistSheet = false
     @State private var isFavorite = false
-
-    private var artistId: String? {
-        song.AlbumArtists?.first?.Id ?? song.ArtistItems?.first?.Id
-    }
 
     var body: some View {
         Button(action: action) {
@@ -204,16 +197,9 @@ struct SongRow: View {
         Button { toggleFavorite() } label: {
             Label(isFavorite ? "Unfavorite" : "Favorite", systemImage: isFavorite ? "heart.fill" : "heart")
         }
-        if let artistId {
-            NavigationLink(value: BaseItem.stub(id: artistId, name: song.primaryArtistName, type: "MusicArtist")) {
-                Label("Go to Artist", systemImage: "music.mic")
-            }
-        }
-        if showGoToAlbum, let albumId = song.AlbumId {
-            NavigationLink(value: BaseItem.stub(id: albumId, name: song.Album ?? song.Name, type: "MusicAlbum")) {
-                Label("Go to Album", systemImage: "opticaldisc")
-            }
-        }
+        // NOTE: "Go to Artist/Album" intentionally omitted — a NavigationLink
+        // inside a contextMenu breaks the menu, and cross-view routing needs a
+        // shared navigation path (separate change).
         downloadButton
         IgnoreToggleButton(item: song)
     }

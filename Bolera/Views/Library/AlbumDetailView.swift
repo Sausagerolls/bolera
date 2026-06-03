@@ -91,6 +91,13 @@ struct AlbumDetailView: View {
                     Image(systemName: isFavorite ? "heart.fill" : "heart")
                 }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    IgnoreAlbumToggleButton(item: album)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
         }
         .task { await load() }
     }

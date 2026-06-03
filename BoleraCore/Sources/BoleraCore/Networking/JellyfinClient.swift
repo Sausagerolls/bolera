@@ -401,6 +401,21 @@ public struct JellyfinClient {
         return Set(albums.map { $0.Id })
     }
 
+    /// Album + artist IDs that live inside `libraryId` (a CollectionFolder).
+    /// A track carries its *album* as ParentId, not the library, so to honour a
+    /// hidden library in generated mixes / home rows we resolve the library's
+    /// album + artist IDs once and filter membership against those sets
+    /// (mirrors the live-album-id approach). Empty / failed → empty sets.
+    public func contentIds(inLibrary libraryId: String) async -> (albums: Set<String>, artists: Set<String>) {
+        let lib = libraryId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !lib.isEmpty else { return ([], []) }
+        async let albumsList = (try? albumsQuery(params: [("ParentId", lib)])) ?? []
+        async let artistsList = (try? artists(limit: 1000, parentId: lib)) ?? []
+        let albums = await albumsList
+        let artists = await artistsList
+        return (Set(albums.map { $0.Id }), Set(artists.map { $0.Id }))
+    }
+
     private func albumsQuery(params: [(String, String)]) async throws -> [BaseItem] {
         var q: [URLQueryItem] = [
             URLQueryItem(name: "IncludeItemTypes", value: "MusicAlbum"),

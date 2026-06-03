@@ -125,9 +125,15 @@ public final class DailyPlaylistStore: ObservableObject {
         let themes = Self.pickThemes(forDate: today)
         let useLastFm = lastFm?.hasAppCredentials ?? false
 
-        // Seed pool = the user's most-played artists recently.
+        // Resolve hidden-library album/artist IDs up front so seeds and every
+        // built mix exclude content the user toggled off (e.g. a Christmas
+        // library). Without this, hidden tracks seed and fill the mixes.
+        await LibraryVisibilityStore.shared.refresh(client: client)
+
+        // Seed pool = the user's most-played artists recently, minus anything
+        // in a hidden library — otherwise a hidden track can anchor a whole mix.
         let recent = (try? await client.recentlyPlayed(limit: 200)) ?? []
-        let recentAudio = await expandToAudio(recent, client: client)
+        let recentAudio = LibraryVisibilityStore.shared.filter(await expandToAudio(recent, client: client))
         let topArtists = topArtistIds(from: recentAudio, count: 15)
         let topArtistTracks = recentAudio.filter { topArtists.contains(artistKey(for: $0)) }
         var seedPool: [BaseItem] = topArtistTracks.isEmpty ? recentAudio : topArtistTracks
@@ -224,7 +230,7 @@ public final class DailyPlaylistStore: ObservableObject {
         tryAdd(seed)
         for t in pool { tryAdd(t) }
 
-        let allowed = LiveFilterStore.shared.filter(ignore.filter(combined))
+        let allowed = LibraryVisibilityStore.shared.filter(LiveFilterStore.shared.filter(ignore.filter(combined)))
         let trimmed = Array(allowed.filter { $0.type == "Audio" }.shuffled().prefix(25))
         guard trimmed.count >= 4 else { return nil }
         return DailyPlaylist(
@@ -272,7 +278,8 @@ public final class DailyPlaylistStore: ObservableObject {
         var seen = existing
         var perArtist: [String: Int] = [:]
         var out: [BaseItem] = []
-        for t in LiveFilterStore.shared.filter(ignore.filter(pool)).shuffled() where t.type == "Audio" {
+        let filtered = LibraryVisibilityStore.shared.filter(LiveFilterStore.shared.filter(ignore.filter(pool)))
+        for t in filtered.shuffled() where t.type == "Audio" {
             guard seen.insert(t.Id).inserted else { continue }
             let k = artistKey(for: t)
             let cap = (k == seedKey) ? 4 : 3

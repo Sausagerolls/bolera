@@ -131,6 +131,9 @@ struct ArtistDetailView: View {
                                     .frame(width: 150, alignment: .leading)
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu {
+                                    IgnoreAlbumToggleButton(item: album)
+                                }
                             }
                         }
                     }
@@ -185,6 +188,15 @@ struct ArtistDetailView: View {
         }
         .navigationTitle(artist.Name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    IgnoreArtistToggleButton(item: artist)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
         .task { await load() }
     }
 

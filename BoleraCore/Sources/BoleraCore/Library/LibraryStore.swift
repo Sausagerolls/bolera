@@ -107,6 +107,9 @@ public final class LibraryStore: ObservableObject {
         do {
             let (a, pt, tt, fav) = try await (added, playedTracks, topTracks, favs)
             let visibility = LibraryVisibilityStore.shared
+            // Resolve hidden libraries' album/artist IDs so the filter below
+            // catches tracks (whose ParentId is their album, not the library).
+            await visibility.refresh(client: client)
             let ignored = IgnoredTracksStore.shared
             // "Recent Albums" = the distinct albums of recently-played tracks.
             // Jellyfin doesn't reliably flag the albums themselves as played, so

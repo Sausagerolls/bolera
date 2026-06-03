@@ -42,7 +42,18 @@ struct LibraryTogglesView: View {
     private func bindingFor(_ lib: BaseItem) -> Binding<Bool> {
         Binding(
             get: { !visibility.isHidden(lib.Id) },
-            set: { visibility.setHidden(lib.Id, !$0) }
+            set: { visible in
+                visibility.setHidden(lib.Id, !visible)
+                // Re-resolve the hidden libraries' album/artist IDs so the
+                // filter immediately reflects the toggle (a track's ParentId is
+                // its album, so the library id alone wouldn't catch its tracks).
+                guard let url = auth.serverURL else { return }
+                Task { await visibility.refresh(client: JellyfinClient(baseURL: url, auth: auth)) }
+                // Today's daily mixes are already cached and won't regenerate on
+                // their own — drop them so Home rebuilds them without (or with)
+                // this library next time it appears.
+                DailyPlaylistStore.shared.clear()
+            }
         )
     }
 

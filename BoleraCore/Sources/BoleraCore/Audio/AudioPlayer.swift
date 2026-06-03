@@ -92,7 +92,9 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// the next track instantly without an HTTP open + initial buffer
     /// stall. We warm the next `preloadDepth` items in the queue.
     private var preloadedAssets: [String: AVURLAsset] = [:]
-    private let preloadDepth = 3
+    /// How many upcoming tracks to warm ahead of the current one. Bumped to 5
+    /// so a run of dead spots while driving doesn't catch the queue cold.
+    private let preloadDepth = 5
     /// Set while loadCurrent is preparing a new item but the old item is still
     /// attached to activePlayer. The periodic time observer would otherwise
     /// read the old item's scrubbed position and flicker the progress bar.
@@ -830,7 +832,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// for tracks that have fallen outside the upcoming window
     /// (e.g. user skipped multiple times, queue was rebuilt).
     private func preloadNextIfNeeded() {
-        guard currentTime >= 3 else { return }
+        // Start warming after a 1s lead (was 3s) — soon enough to be ready for
+        // dead spots, late enough that the current track's own initial buffer
+        // gets priority instead of competing with N simultaneous opens.
+        guard currentTime >= 1 else { return }
         let upcoming = upcomingPlayableIndices(count: preloadDepth)
         let upcomingIds = Set(upcoming.map { queue[$0].Id })
 

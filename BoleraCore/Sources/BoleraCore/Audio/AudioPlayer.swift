@@ -101,6 +101,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private var hasScrobbledCurrent: Bool = false
     private var hasUpdatedNowPlayingCurrent: Bool = false
 
+    /// Delays the Jellyfin "playback started" report so a quick skip (track
+    /// changed within `startReportDelay`) never registers the track as played —
+    /// keeps drive-by skips out of Recently Played / Recent Albums. Cancelled
+    /// and rescheduled on every track change.
+    private var reportStartTask: Task<Void, Never>?
+    private let startReportDelay: TimeInterval = 2.0
+
     // Stall recovery. A streamed item whose connection drops sits in
     // .waitingToPlayAtSpecifiedRate forever — automaticallyWaitsToMinimize-
     // Stalling never gets fresh data, and the periodic time observer doesn't
@@ -309,13 +316,25 @@ public final class AudioPlayer: NSObject, ObservableObject {
     }
 
     public func pause() {
-        activePlayer.pause()
+        // If a crossfade is mid-flight, the incoming track is playing on the
+        // inactive player too — pausing only the active one left it audible.
+        // Cancel the fade and snap back to the track shown in the player so a
+        // pause actually silences everything.
+        if crossfadeTimer != nil {
+            cancelCrossfade()
+            inactivePlayer.pause()
+            inactivePlayer.replaceCurrentItem(with: nil)
+            inactivePlayer.volume = 0
+            activePlayer.volume = 1.0
+        }
+        playerA.pause(); playerB.pause()
         isPlaying = false
         updateNowPlaying()
         reportProgress(event: "pause", paused: true)
     }
 
     public func stop() {
+        reportStartTask?.cancel()
         if let current = current {
             Task { try? await reportStop(item: current) }
         }
@@ -532,7 +551,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
         loadArtwork(for: item)
         updateNowPlaying()
-        Task { try? await reportStart(item: item) }
+        scheduleStartReport(for: item)
         Task { @MainActor in await LastFmService.shared.updateNowPlaying(item); hasUpdatedNowPlayingCurrent = true }
         maybeExtendQueue()   // endless-mix: top up the queue as it nears the end
     }
@@ -740,7 +759,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
         loadArtwork(for: upcoming)
         updateNowPlaying()
-        Task { try? await reportStart(item: upcoming) }
+        scheduleStartReport(for: upcoming)
         Task { @MainActor in await LastFmService.shared.updateNowPlaying(upcoming) }
     }
 
@@ -852,6 +871,11 @@ public final class AudioPlayer: NSObject, ObservableObject {
         guard let item = activePlayer.currentItem else { return }
         let t = CMTimeGetSeconds(item.currentTime())
         currentTime = t.isFinite ? t : 0
+        // Keep the lock-screen / notification / CarPlay elapsed time in sync.
+        // Relying on the system to extrapolate from a single anchor left the
+        // first track's scrubber stuck at 0 with no progress marker until a
+        // skip; pushing the real elapsed each tick fixes it.
+        updateNowPlaying()
         if let cur = current, !hasScrobbledCurrent {
             // Last.fm scrobble rule: track must be > 30s long and listened past
             // 50% OR 4 minutes, whichever comes first.
@@ -1082,6 +1106,18 @@ public final class AudioPlayer: NSObject, ObservableObject {
     }
 
     // MARK: - Playback reporting
+
+    /// Schedule the "playback started" report after a short dwell so quick
+    /// skips don't count as plays. Cancels any pending report first.
+    private func scheduleStartReport(for item: BaseItem) {
+        reportStartTask?.cancel()
+        reportStartTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            try? await Task.sleep(nanoseconds: UInt64(self.startReportDelay * 1_000_000_000))
+            guard !Task.isCancelled, self.current?.Id == item.Id else { return }
+            try? await self.reportStart(item: item)
+        }
+    }
 
     private func reportStart(item: BaseItem) async throws {
         guard let client = client else { return }

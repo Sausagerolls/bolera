@@ -49,12 +49,6 @@ struct AlbumDetailView: View {
                         SongRow(index: song.IndexNumber ?? (idx + 1), song: song) {
                             AudioPlayer.shared.play(items: songs, startAt: idx)
                         }
-                        .contextMenu {
-                            Button { AudioPlayer.shared.playNext(song) } label: { Label("Play Next", systemImage: "text.insert") }
-                            Button { AudioPlayer.shared.addToQueue(song) } label: { Label("Add to Queue", systemImage: "text.badge.plus") }
-                            downloadMenuButton(for: song)
-                            IgnoreToggleButton(item: song)
-                        }
                         Divider().padding(.leading, 56)
                     }
                 }
@@ -164,6 +158,17 @@ struct SongRow: View {
     let index: Int
     let song: BaseItem
     let action: () -> Void
+    /// When true, the context menu offers "Go to Album" (hidden on the album's
+    /// own page where it would be redundant).
+    var showGoToAlbum: Bool = false
+
+    @EnvironmentObject private var auth: AuthManager
+    @State private var showPlaylistSheet = false
+    @State private var isFavorite = false
+
+    private var artistId: String? {
+        song.AlbumArtists?.first?.Id ?? song.ArtistItems?.first?.Id
+    }
 
     var body: some View {
         Button(action: action) {
@@ -184,5 +189,53 @@ struct SongRow: View {
             .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
+        .contextMenu { menu }
+        .sheet(isPresented: $showPlaylistSheet) {
+            AddToPlaylistSheet(item: song).presentationDetents([.medium, .large])
+        }
+        .onAppear { isFavorite = song.UserData?.IsFavorite ?? false }
+    }
+
+    @ViewBuilder
+    private var menu: some View {
+        Button { AudioPlayer.shared.playNext(song) } label: { Label("Play Next", systemImage: "text.insert") }
+        Button { AudioPlayer.shared.addToQueue(song) } label: { Label("Add to Queue", systemImage: "text.badge.plus") }
+        Button { showPlaylistSheet = true } label: { Label("Add to Playlist…", systemImage: "music.note.list") }
+        Button { toggleFavorite() } label: {
+            Label(isFavorite ? "Unfavorite" : "Favorite", systemImage: isFavorite ? "heart.fill" : "heart")
+        }
+        if let artistId {
+            NavigationLink(value: BaseItem.stub(id: artistId, name: song.primaryArtistName, type: "MusicArtist")) {
+                Label("Go to Artist", systemImage: "music.mic")
+            }
+        }
+        if showGoToAlbum, let albumId = song.AlbumId {
+            NavigationLink(value: BaseItem.stub(id: albumId, name: song.Album ?? song.Name, type: "MusicAlbum")) {
+                Label("Go to Album", systemImage: "opticaldisc")
+            }
+        }
+        downloadButton
+        IgnoreToggleButton(item: song)
+    }
+
+    @ViewBuilder
+    private var downloadButton: some View {
+        if DownloadManager.shared.isDownloaded(song.Id) {
+            Button(role: .destructive) { DownloadManager.shared.delete(song.Id) } label: {
+                Label("Remove Download", systemImage: "trash")
+            }
+        } else {
+            Button {
+                guard let url = auth.serverURL else { return }
+                DownloadManager.shared.download(song, using: JellyfinClient(baseURL: url, auth: auth), individual: true)
+            } label: { Label("Download", systemImage: "arrow.down.circle") }
+        }
+    }
+
+    private func toggleFavorite() {
+        guard let url = auth.serverURL else { return }
+        isFavorite.toggle()
+        let fav = isFavorite
+        Task { try? await JellyfinClient(baseURL: url, auth: auth).setFavorite(song.Id, favorite: fav) }
     }
 }

@@ -207,28 +207,40 @@ struct ArtistsView: View {
     @State private var loading = false
     @State private var activeScrubLetter: String?
 
+    // Three flexible columns (fixed, not adaptive) so cell widths are
+    // deterministic — same stable-layout reasoning as AlbumsView.
+    let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
     private let cacheKey = "artists"
 
     var body: some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .trailing) {
-                List(items) { artist in
-                    NavigationLink(value: artist) {
-                        HStack(spacing: 12) {
-                            JellyfinImage(itemId: artist.Id, tag: artist.ImageTags?["Primary"], maxWidth: 180, cornerRadius: 28)
-                                .frame(width: 56, height: 56)
-                            VStack(alignment: .leading) {
-                                Text(artist.Name).font(.body)
-                                if let count = artist.AlbumCount {
-                                    Text("\(count) album\(count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 18) {
+                        ForEach(items) { artist in
+                            NavigationLink(value: artist) {
+                                VStack(spacing: 6) {
+                                    Color.clear
+                                        .aspectRatio(1, contentMode: .fit)
+                                        .overlay(
+                                            JellyfinImage(itemId: artist.Id, tag: artist.ImageTags?["Primary"], maxWidth: 300, cornerRadius: 200)
+                                        )
+                                    Text(artist.Name).font(.subheadline).lineLimit(1).multilineTextAlignment(.center)
+                                    if let count = artist.AlbumCount {
+                                        Text("\(count) album\(count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                                    }
                                 }
+                            }
+                            .buttonStyle(.plain)
+                            .id(artist.Id)
+                            .contextMenu {
+                                IgnoreArtistToggleButton(item: artist)
                             }
                         }
                     }
-                    .listRowBackground(Color.clear)
-                    .listRowSeparatorTint(.white.opacity(0.06))
+                    .padding()
+                    Color.clear.frame(height: 100)
                 }
-                .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .overlay { if loading && items.isEmpty { ProgressView() } }
 

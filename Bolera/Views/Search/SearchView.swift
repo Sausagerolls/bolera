@@ -52,8 +52,29 @@ struct SearchView: View {
             if Task.isCancelled { return }
             let client = JellyfinClient(baseURL: url, auth: auth)
             let results = (try? await client.search(term)) ?? []
-            await MainActor.run { self.hints = results }
+            // Hidden libraries are promised to be skipped in Search too. Map
+            // each hint to a stub the visibility filter understands (Audio →
+            // AlbumId, album/artist → its own id) and keep only survivors.
+            let stubs = results.map { Self.stub(for: $0) }
+            await MainActor.run {
+                let keptIds = Set(LibraryVisibilityStore.shared.filter(stubs).map { $0.Id })
+                self.hints = results.filter { keptIds.contains($0.ItemId ?? $0.Id ?? "") }
+            }
         }
+    }
+
+    /// Minimal BaseItem stub from a search hint, carrying just the fields the
+    /// LibraryVisibilityStore filter inspects (id, type, album id).
+    private static func stub(for hint: SearchHint) -> BaseItem {
+        BaseItem(
+            Id: hint.ItemId ?? hint.Id ?? "", Name: hint.Name, type: hint.type,
+            AlbumId: hint.AlbumId, Album: nil, AlbumArtist: hint.AlbumArtist,
+            AlbumArtists: nil, ArtistItems: nil, Artists: nil,
+            ParentId: nil, CollectionType: nil,
+            RunTimeTicks: nil, IndexNumber: nil, ParentIndexNumber: nil, ProductionYear: nil,
+            UserData: nil, ImageTags: nil, AlbumPrimaryImageTag: nil, BackdropImageTags: nil,
+            ChildCount: nil, SongCount: nil, AlbumCount: nil, Overview: nil, Genres: nil
+        )
     }
 }
 

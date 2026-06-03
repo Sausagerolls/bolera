@@ -105,6 +105,9 @@ struct ArtistDetailView: View {
                                     .padding(.vertical, 6)
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu {
+                                    IgnoreToggleButton(item: track)
+                                }
                                 if idx < topTracks.count - 1 {
                                     Divider().padding(.leading, 40)
                                 }
@@ -338,9 +341,15 @@ struct ArtistDetailView: View {
                 var seen = Set(mix.map { $0.Id })
                 mix.append(contentsOf: fallback.filter { seen.insert($0.Id).inserted })
             }
+            // Honour hidden libraries + ignore lists in generated radio, same
+            // as the daily-mix pipeline. Refresh first so the hidden-library
+            // album/artist sets are current.
+            await LibraryVisibilityStore.shared.refresh(client: client)
             await MainActor.run {
                 isBuildingRadio = false
-                let final = Array(LiveFilterStore.shared.filter(mix).prefix(100))
+                let cleaned = LibraryVisibilityStore.shared.filter(
+                    LiveFilterStore.shared.filter(IgnoredTracksStore.shared.filter(mix)))
+                let final = Array(cleaned.prefix(100))
                 if !final.isEmpty { AudioPlayer.shared.play(items: final) }
             }
         }

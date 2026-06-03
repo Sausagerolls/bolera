@@ -207,11 +207,22 @@ struct HomeView: View {
                 tileContent(item)
             }
             .buttonStyle(.plain)
+            .contextMenu { tileIgnoreMenu(item) }
         } else {
             NavigationLink(value: item) {
                 tileContent(item)
             }
             .buttonStyle(.plain)
+            .contextMenu { tileIgnoreMenu(item) }
+        }
+    }
+
+    @ViewBuilder
+    private func tileIgnoreMenu(_ item: BaseItem) -> some View {
+        switch item.type {
+        case "MusicAlbum":  IgnoreAlbumToggleButton(item: item)
+        case "MusicArtist": IgnoreArtistToggleButton(item: item)
+        default:            IgnoreToggleButton(item: item)
         }
     }
 
@@ -573,7 +584,7 @@ final class MoodMixGenerator {
         // Drop tracks the user has explicitly ignored (or any track whose
         // artist or album sits on the ignore lists), and live recordings when
         // the user has chosen to exclude them.
-        combined = LiveFilterStore.shared.filter(IgnoredTracksStore.shared.filter(combined))
+        combined = LibraryVisibilityStore.shared.filter(LiveFilterStore.shared.filter(IgnoredTracksStore.shared.filter(combined)))
 
         // Optional decade filter — only apply if it leaves a healthy pool
         // AND doesn't shrink the result by more than 60%. Decade is a soft

@@ -534,6 +534,19 @@ struct NowPlayingActionsSheet: View {
                         } label: {
                             Label("Skip & Ignore Track", systemImage: "hand.raised.slash.fill")
                         }
+                        if let albumId = player.current?.AlbumId {
+                            IgnoreAlbumToggleButton(item: .stub(
+                                id: albumId,
+                                name: player.current?.Album ?? player.current?.Name ?? "Album",
+                                type: "MusicAlbum"))
+                        }
+                        if let artistId = player.current?.AlbumArtists?.first?.Id
+                            ?? player.current?.ArtistItems?.first?.Id {
+                            IgnoreArtistToggleButton(item: .stub(
+                                id: artistId,
+                                name: player.current?.primaryArtistName ?? "Artist",
+                                type: "MusicArtist"))
+                        }
                     }
                 }
                 Section {
@@ -743,6 +756,15 @@ struct SimilarTracksSheet: View {
                                 Text(item.Name).foregroundStyle(.primary).lineLimit(1)
                                 Text(item.primaryArtistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
+                        }
+                    }
+                    .contextMenu {
+                        IgnoreToggleButton(item: item)
+                        if let albumId = item.AlbumId {
+                            IgnoreAlbumToggleButton(item: .stub(id: albumId, name: item.Album ?? item.Name, type: "MusicAlbum"))
+                        }
+                        if let artistId = item.AlbumArtists?.first?.Id ?? item.ArtistItems?.first?.Id {
+                            IgnoreArtistToggleButton(item: .stub(id: artistId, name: item.primaryArtistName, type: "MusicArtist"))
                         }
                     }
                 }

@@ -481,7 +481,9 @@ final class CarPlayCoordinator {
         guard let client = client else { return }
         async let topTracksTask: [BaseItem] = (try? await client.topTracksForArtist(artist.Id, name: artist.Name, limit: 10)) ?? []
         async let albumsTask: [BaseItem] = (try? await client.albumsForArtist(artist.Id, name: artist.Name)) ?? []
-        let (topTracks, albums) = await (topTracksTask, albumsTask)
+        let (topTracksRaw, albums) = await (topTracksTask, albumsTask)
+        // Drop hidden-library tracks from the artist's top-tracks list.
+        let topTracks = LibraryVisibilityStore.shared.filter(topTracksRaw)
 
         var sections: [CPListSection] = []
 
@@ -506,7 +508,7 @@ final class CarPlayCoordinator {
             Task { @MainActor in
                 if let client = self?.client,
                    let mix = try? await client.instantMix(itemId: artist.Id) {
-                    let filtered = LiveFilterStore.shared.filter(mix)
+                    let filtered = LibraryVisibilityStore.shared.filter(LiveFilterStore.shared.filter(mix))
                     if !filtered.isEmpty {
                         AudioPlayer.shared.play(items: filtered)
                         self?.pushNowPlaying()

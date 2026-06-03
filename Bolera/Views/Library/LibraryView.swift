@@ -322,6 +322,9 @@ struct AlbumsView: View {
                             }
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            IgnoreAlbumToggleButton(item: album)
+                        }
                     }
                 }
                 .padding()

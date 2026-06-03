@@ -67,15 +67,21 @@ public final class LibraryVisibilityStore: ObservableObject {
             }
             return
         }
-        var albums: Set<String> = []
-        var artists: Set<String> = []
-        for lib in hidden {
-            let ids = await client.contentIds(inLibrary: lib)
-            albums.formUnion(ids.albums)
-            artists.formUnion(ids.artists)
+        // Resolve every hidden library concurrently so N libraries cost ~1
+        // round-trip, not N (this runs on home load + mix generation).
+        let libs = Array(hidden)
+        let resolved = await withTaskGroup(of: (albums: Set<String>, artists: Set<String>).self) { group in
+            for lib in libs { group.addTask { await client.contentIds(inLibrary: lib) } }
+            var albums: Set<String> = []
+            var artists: Set<String> = []
+            for await ids in group {
+                albums.formUnion(ids.albums)
+                artists.formUnion(ids.artists)
+            }
+            return (albums: albums, artists: artists)
         }
-        hiddenAlbumIds = albums
-        hiddenArtistIds = artists
+        hiddenAlbumIds = resolved.albums
+        hiddenArtistIds = resolved.artists
         persistLocal()
     }
 

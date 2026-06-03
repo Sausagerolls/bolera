@@ -409,11 +409,35 @@ public struct JellyfinClient {
     public func contentIds(inLibrary libraryId: String) async -> (albums: Set<String>, artists: Set<String>) {
         let lib = libraryId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !lib.isEmpty else { return ([], []) }
-        async let albumsList = (try? albumsQuery(params: [("ParentId", lib)])) ?? []
-        async let artistsList = (try? artists(limit: 1000, parentId: lib)) ?? []
-        let albums = await albumsList
-        let artists = await artistsList
-        return (Set(albums.map { $0.Id }), Set(artists.map { $0.Id }))
+        // Paginate both — a large hidden library (e.g. >500 albums) would
+        // otherwise be silently truncated, leaking the overflow back into
+        // generated content.
+        async let albumIds = allItemIds(parentId: lib, itemType: "MusicAlbum")
+        async let artistIds = allItemIds(parentId: lib, itemType: "MusicArtist")
+        return (await albumIds, await artistIds)
+    }
+
+    /// All item IDs of `itemType` under `parentId`, paged until exhausted.
+    private func allItemIds(parentId: String, itemType: String) async -> Set<String> {
+        var out: Set<String> = []
+        var start = 0
+        let page = 500
+        while true {
+            let q: [URLQueryItem] = [
+                URLQueryItem(name: "IncludeItemTypes", value: itemType),
+                URLQueryItem(name: "Recursive", value: "true"),
+                URLQueryItem(name: "ParentId", value: parentId),
+                URLQueryItem(name: "StartIndex", value: String(start)),
+                URLQueryItem(name: "Limit", value: String(page))
+            ]
+            guard let req = try? request("Users/\(userId)/Items", query: q),
+                  let res = try? await send(req, as: ItemsResponse<BaseItem>.self)
+            else { break }
+            out.formUnion(res.Items.map { $0.Id })
+            if res.Items.count < page { break }   // last page
+            start += res.Items.count
+        }
+        return out
     }
 
     private func albumsQuery(params: [(String, String)]) async throws -> [BaseItem] {

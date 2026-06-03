@@ -101,6 +101,28 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private var hasScrobbledCurrent: Bool = false
     private var hasUpdatedNowPlayingCurrent: Bool = false
 
+    // Stall recovery. A streamed item whose connection drops sits in
+    // .waitingToPlayAtSpecifiedRate forever — automaticallyWaitsToMinimize-
+    // Stalling never gets fresh data, and the periodic time observer doesn't
+    // fire while stalled, so nothing recovers it (the symptom: audio freezes a
+    // couple seconds in and stays frozen until the user skips). When a stall
+    // begins we arm a timer; if it hasn't recovered we reload the item, which
+    // reopens the stream at the current position.
+    private var stallStartedAt: Date?
+    private var stallReloadCount = 0
+    private let stallReloadThreshold: TimeInterval = 6
+    private let maxStallReloads = 3
+    /// Position to seek to once a reloaded item reaches .readyToPlay, so a
+    /// stall-recovery reload resumes where it froze instead of from the start.
+    private var pendingSeekAfterLoad: Double?
+
+    /// Consecutive endless-mix top-ups that returned nothing. A single empty
+    /// result is usually a transient network failure (driving through a dead
+    /// spot), not a genuinely tapped-out artist — so we only stop extending
+    /// after several empties in a row instead of latching on the first.
+    private var extenderEmptyStreak = 0
+    private let maxExtenderEmptyStreak = 3
+
     public override init() {
         super.init()
         // Keep AVPlayer's default pre-buffering (automaticallyWaitsToMinimize-
@@ -159,6 +181,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         guard !items.isEmpty else { return }
         queueExtender = nil          // a plain play isn't an endless mix
         extenderExhausted = false
+        extenderEmptyStreak = 0
         playSessionId = UUID().uuidString
         originalQueue = items
         if shuffle {
@@ -205,11 +228,17 @@ public final class AudioPlayer: NSObject, ObservableObject {
             let have = Set(self.queue.map { $0.Id })
             let fresh = more.filter { !have.contains($0.Id) }
             if fresh.isEmpty {
-                // Nothing new to add — the artist's neighbourhood is tapped out;
-                // stop hammering the extender for the rest of this mix.
-                self.extenderExhausted = true
+                // Nothing new this round. Could be a tapped-out artist OR a
+                // transient network failure (the extender returns [] on error).
+                // Only give up after several empties in a row so one dead spot
+                // while driving doesn't kill the mix for the whole session.
+                self.extenderEmptyStreak += 1
+                if self.extenderEmptyStreak >= self.maxExtenderEmptyStreak {
+                    self.extenderExhausted = true
+                }
                 return
             }
+            self.extenderEmptyStreak = 0
             self.queue.append(contentsOf: fresh)
             self.originalQueue.append(contentsOf: fresh)
         }
@@ -408,9 +437,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
     // MARK: - Loading
 
-    private func loadCurrent(autoplay: Bool) {
+    private func loadCurrent(autoplay: Bool, resumeAt: Double? = nil) {
         guard let item = current else { return }
         cancelCrossfade()
+        pendingSeekAfterLoad = resumeAt
 
         // Reuse the warmed asset when possible — saves the HTTP open +
         // track enumeration round-trip that would otherwise stall the
@@ -468,6 +498,11 @@ public final class AudioPlayer: NSObject, ObservableObject {
             if item.status == .readyToPlay {
                 let d = CMTimeGetSeconds(item.duration)
                 self?.duration = d.isFinite ? d : (self?.duration ?? 0)
+                // Resume at the frozen position after a stall-recovery reload.
+                if let resume = self?.pendingSeekAfterLoad {
+                    self?.pendingSeekAfterLoad = nil
+                    self?.seek(to: resume)
+                }
                 self?.updateNowPlaying()
             } else if item.status == .failed {
                 // Surface the failure instead of leaving the UI stuck on
@@ -863,6 +898,20 @@ public final class AudioPlayer: NSObject, ObservableObject {
             // .paused means actually paused; .playing and .waiting both mean the
             // user intends playback (a stall isn't a pause).
             self.isPlaying = (status != .paused)
+            // Stall watchdog bookkeeping.
+            switch status {
+            case .waitingToPlayAtSpecifiedRate:
+                if self.stallStartedAt == nil {
+                    self.stallStartedAt = Date()
+                    self.armStallWatchdog()
+                }
+            case .playing:
+                self.stallStartedAt = nil
+                self.stallReloadCount = 0
+            case .paused:
+                self.stallStartedAt = nil
+            @unknown default: break
+            }
             // On resume, re-read the real position so Now Playing re-syncs after
             // the frozen-bar stall instead of jumping from a stale elapsed time.
             if status == .playing, let item = player.currentItem {
@@ -871,6 +920,39 @@ public final class AudioPlayer: NSObject, ObservableObject {
             }
             self.updateNowPlaying()
         }
+    }
+
+    /// Armed when a stall begins. If the item is still stalled after the
+    /// threshold (and we haven't exhausted reload attempts for this track),
+    /// reload it so the stream reopens at the frozen position. Re-arms itself
+    /// after each reload via the stallStartedAt transition in handleTimeControl.
+    private func armStallWatchdog() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + stallReloadThreshold) { [weak self] in
+            guard let self = self else { return }
+            guard let started = self.stallStartedAt else { return }           // recovered
+            guard Date().timeIntervalSince(started) >= self.stallReloadThreshold else { return }
+            guard self.isPlaying else { return }                              // user paused
+            guard self.stallReloadCount < self.maxStallReloads else {
+                DebugLog.write("[AudioPlayer] stall watchdog gave up on '\(self.current?.Name ?? "?")' after \(self.stallReloadCount) reloads")
+                return
+            }
+            self.stallReloadCount += 1
+            DebugLog.write("[AudioPlayer] stall watchdog reloading '\(self.current?.Name ?? "?")' at \(Int(self.currentTime))s (attempt \(self.stallReloadCount))")
+            self.reloadCurrentResumingPosition()
+        }
+    }
+
+    /// Rebuild the current item from scratch (fresh AVURLAsset → reopens the
+    /// HTTP connection) and resume at the position it stalled on. Used by the
+    /// stall watchdog to recover a dropped stream without skipping the track.
+    private func reloadCurrentResumingPosition() {
+        let resumeAt = currentTime
+        stallStartedAt = nil
+        // Drop any warmed asset for the current track so we genuinely reopen
+        // the stream instead of reusing the same (possibly dead) asset.
+        if let id = current?.Id { preloadedAssets.removeValue(forKey: id) }
+        reactivateSession()
+        loadCurrent(autoplay: true, resumeAt: resumeAt)
     }
 
     #if canImport(UIKit)

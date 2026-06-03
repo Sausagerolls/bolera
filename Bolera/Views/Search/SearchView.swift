@@ -89,6 +89,7 @@ struct SearchRow: View {
         if hint.type == "Audio" {
             Button(action: playSong) { rowContent }
                 .buttonStyle(.plain)
+                .trackContextMenu(hintItemStub)
         } else {
             NavigationLink(value: hintItemStub) { rowContent }
         }

@@ -543,6 +543,7 @@ private struct DownloadedTrackRow: View {
             }
         }
         .buttonStyle(.plain)
+        .trackContextMenu(t)
     }
 }
 

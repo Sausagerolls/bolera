@@ -52,11 +52,7 @@ struct PlaylistDetailView: View {
                         .padding(.vertical, 8)
                         .contentShape(Rectangle())
                         .onTapGesture { AudioPlayer.shared.play(items: songs, startAt: idx) }
-                        .contextMenu {
-                            Button { AudioPlayer.shared.playNext(song) } label: { Label("Play Next", systemImage: "text.insert") }
-                            Button { AudioPlayer.shared.addToQueue(song) } label: { Label("Add to Queue", systemImage: "text.badge.plus") }
-                            IgnoreToggleButton(item: song)
-                        }
+                        .trackContextMenu(song)
                         Divider().padding(.leading, 56)
                     }
                 }

@@ -207,22 +207,16 @@ struct HomeView: View {
                 tileContent(item)
             }
             .buttonStyle(.plain)
-            .contextMenu { tileIgnoreMenu(item) }
+            .trackContextMenu(item)
         } else {
             NavigationLink(value: item) {
                 tileContent(item)
             }
             .buttonStyle(.plain)
-            .contextMenu { tileIgnoreMenu(item) }
-        }
-    }
-
-    @ViewBuilder
-    private func tileIgnoreMenu(_ item: BaseItem) -> some View {
-        switch item.type {
-        case "MusicAlbum":  IgnoreAlbumToggleButton(item: item)
-        case "MusicArtist": IgnoreArtistToggleButton(item: item)
-        default:            IgnoreToggleButton(item: item)
+            .contextMenu {
+                if item.type == "MusicAlbum" { IgnoreAlbumToggleButton(item: item) }
+                else if item.type == "MusicArtist" { IgnoreArtistToggleButton(item: item) }
+            }
         }
     }
 

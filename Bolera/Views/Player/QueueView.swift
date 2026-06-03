@@ -2,16 +2,22 @@ import SwiftUI
 import BoleraCore
 
 struct QueueView: View {
-    @EnvironmentObject var player: AudioPlayer
     @Environment(\.dismiss) private var dismiss
     @State private var editMode: EditMode = .inactive
     @State private var showSaveSheet = false
+    // Mirror only queue + currentIndex locally. Observing AudioPlayer directly
+    // re-rendered this view every ~0.5s as currentTime ticked, which made the
+    // open toolbar menu's text visibly pulse while music played.
+    @State private var queue: [BaseItem] = []
+    @State private var currentIndex = 0
+
+    private var player: AudioPlayer { AudioPlayer.shared }
 
     var body: some View {
         NavigationStack {
             List {
                 Section("Up Next") {
-                    ForEach(Array(player.queue.enumerated()), id: \.element.id) { idx, item in
+                    ForEach(Array(queue.enumerated()), id: \.element.id) { idx, item in
                         HStack(spacing: 12) {
                             JellyfinImage(itemId: item.AlbumId ?? item.Id, tag: item.AlbumPrimaryImageTag, maxWidth: 120, cornerRadius: 6)
                                 .frame(width: 40, height: 40)
@@ -20,12 +26,13 @@ struct QueueView: View {
                                 Text(item.primaryArtistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                             Spacer()
-                            if idx == player.currentIndex {
+                            if idx == currentIndex {
                                 Image(systemName: "speaker.wave.2.fill").foregroundStyle(Color.accentColor)
                             }
                         }
                         .contentShape(Rectangle())
                         .onTapGesture { player.jumpTo(index: idx) }
+                        .trackContextMenu(item)
                         .swipeActions(edge: .leading) {
                             IgnoreSwipeButton(item: item)
                         }
@@ -48,7 +55,7 @@ struct QueueView: View {
                         } label: {
                             Label("Save as Playlist…", systemImage: "square.and.arrow.down")
                         }
-                        .disabled(player.queue.isEmpty)
+                        .disabled(queue.isEmpty)
                         EditButton()
                         Divider()
                         Button(role: .destructive) {
@@ -60,11 +67,6 @@ struct QueueView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
-                    // QueueView observes AudioPlayer, so it re-renders every
-                    // ~0.5s while currentTime ticks. With the menu open that
-                    // re-render animated the menu text (visible "pulsing").
-                    // Disable implicit animations for this subtree.
-                    .transaction { $0.animation = nil }
                 }
             }
             .sheet(isPresented: $showSaveSheet) {
@@ -72,5 +74,7 @@ struct QueueView: View {
                     .presentationDetents([.medium])
             }
         }
+        .onReceive(player.$queue) { queue = $0 }
+        .onReceive(player.$currentIndex) { currentIndex = $0 }
     }
 }

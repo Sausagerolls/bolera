@@ -159,10 +159,6 @@ struct SongRow: View {
     let song: BaseItem
     let action: () -> Void
 
-    @EnvironmentObject private var auth: AuthManager
-    @State private var showPlaylistSheet = false
-    @State private var isFavorite = false
-
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
@@ -182,46 +178,6 @@ struct SongRow: View {
             .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
-        .contextMenu { menu }
-        .sheet(isPresented: $showPlaylistSheet) {
-            AddToPlaylistSheet(item: song).presentationDetents([.medium, .large])
-        }
-        .onAppear { isFavorite = song.UserData?.IsFavorite ?? false }
-    }
-
-    @ViewBuilder
-    private var menu: some View {
-        Button { AudioPlayer.shared.playNext(song) } label: { Label("Play Next", systemImage: "text.insert") }
-        Button { AudioPlayer.shared.addToQueue(song) } label: { Label("Add to Queue", systemImage: "text.badge.plus") }
-        Button { showPlaylistSheet = true } label: { Label("Add to Playlist…", systemImage: "music.note.list") }
-        Button { toggleFavorite() } label: {
-            Label(isFavorite ? "Unfavorite" : "Favorite", systemImage: isFavorite ? "heart.fill" : "heart")
-        }
-        // NOTE: "Go to Artist/Album" intentionally omitted — a NavigationLink
-        // inside a contextMenu breaks the menu, and cross-view routing needs a
-        // shared navigation path (separate change).
-        downloadButton
-        IgnoreToggleButton(item: song)
-    }
-
-    @ViewBuilder
-    private var downloadButton: some View {
-        if DownloadManager.shared.isDownloaded(song.Id) {
-            Button(role: .destructive) { DownloadManager.shared.delete(song.Id) } label: {
-                Label("Remove Download", systemImage: "trash")
-            }
-        } else {
-            Button {
-                guard let url = auth.serverURL else { return }
-                DownloadManager.shared.download(song, using: JellyfinClient(baseURL: url, auth: auth), individual: true)
-            } label: { Label("Download", systemImage: "arrow.down.circle") }
-        }
-    }
-
-    private func toggleFavorite() {
-        guard let url = auth.serverURL else { return }
-        isFavorite.toggle()
-        let fav = isFavorite
-        Task { try? await JellyfinClient(baseURL: url, auth: auth).setFavorite(song.Id, favorite: fav) }
+        .trackContextMenu(song)
     }
 }

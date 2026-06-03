@@ -758,15 +758,7 @@ struct SimilarTracksSheet: View {
                             }
                         }
                     }
-                    .contextMenu {
-                        IgnoreToggleButton(item: item)
-                        if let albumId = item.AlbumId {
-                            IgnoreAlbumToggleButton(item: .stub(id: albumId, name: item.Album ?? item.Name, type: "MusicAlbum"))
-                        }
-                        if let artistId = item.AlbumArtists?.first?.Id ?? item.ArtistItems?.first?.Id {
-                            IgnoreArtistToggleButton(item: .stub(id: artistId, name: item.primaryArtistName, type: "MusicArtist"))
-                        }
-                    }
+                    .trackContextMenu(item)
                 }
             }
             .navigationTitle("Similar Tracks")

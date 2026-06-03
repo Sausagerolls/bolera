@@ -12,6 +12,15 @@ public enum RepeatMode: Int {
     case off, all, one
 }
 
+/// The high-frequency playback position (updated ~2×/sec) lives on its own
+/// tiny observable. Views that show a scrubber observe THIS; everything else
+/// observes `AudioPlayer`, so a track's elapsed time no longer forces the
+/// whole now-playing screen (and anything it presents) to re-render twice a
+/// second — that 2Hz churn was pulsing the Queue sheet's menu.
+public final class PlaybackClock: ObservableObject {
+    @Published public internal(set) var currentTime: Double = 0
+}
+
 /// Singleton audio engine. Maintains two `AVPlayer` instances so we can crossfade
 /// between consecutive tracks, installs an `MTAudioProcessingTap` on each item
 /// for real-time EQ + visualizer levels, prefers locally downloaded files when
@@ -27,7 +36,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// .waitingToPlayAtSpecifiedRate) — playback is intended but audio is
     /// waiting on data. Lets the UI show a spinner instead of a frozen bar.
     @Published public private(set) var isBuffering: Bool = false
-    @Published public private(set) var currentTime: Double = 0
+    /// Not @Published — observing AudioPlayer no longer re-renders a view
+    /// every tick. The published mirror lives on `clock` for the scrubber.
+    public private(set) var currentTime: Double = 0 {
+        didSet { clock.currentTime = currentTime }
+    }
+    /// Observe this (not AudioPlayer) for the playback position.
+    public let clock = PlaybackClock()
     @Published public private(set) var duration: Double = 0
     @Published public private(set) var artwork: PlatformImage?
     @Published public var shuffle: Bool = false {

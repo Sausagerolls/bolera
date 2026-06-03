@@ -7,9 +7,6 @@ struct NowPlayingContent: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var downloads: DownloadManager
     @EnvironmentObject var sleepTimer: SleepTimer
-    @State private var scrub: Double = 0
-    @State private var isScrubbing = false
-    @State private var ignoreSlideSetUntil: Date = .distantPast
     @State private var showQueue = false
     @State private var showLyrics = false
     @State private var showVisualizer = false
@@ -38,7 +35,7 @@ struct NowPlayingContent: View {
                 Spacer(minLength: 12)
                 actionRow
                 Spacer(minLength: 4)
-                scrubber
+                ScrubBar(clock: player.clock)
                 controls
                 Spacer(minLength: 14)
                 bottomBar
@@ -77,13 +74,6 @@ struct NowPlayingContent: View {
                 }
         )
         .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.86), value: dragOffset)
-        .onChange(of: player.current?.Id) { _, _ in
-            // Reset scrubber state when track changes so a stale `scrub`
-            // value doesn't leak the previous track's scrub position into
-            // the new track's progress display.
-            isScrubbing = false
-            scrub = 0
-        }
         .sheet(isPresented: $showQueue) {
             QueueView()
                 .presentationDetents([.medium, .large])
@@ -341,44 +331,6 @@ struct NowPlayingContent: View {
         .buttonStyle(.plain)
     }
 
-    private var scrubber: some View {
-        let safeDur = (player.duration.isFinite && player.duration > 0) ? player.duration : 1
-        let safeCur = player.currentTime.isFinite ? player.currentTime : 0
-        return VStack(spacing: 4) {
-            Slider(value: Binding(
-                get: {
-                    let raw = isScrubbing ? scrub : safeCur
-                    return min(max(0, raw), safeDur)
-                },
-                set: { newValue in
-                    // SwiftUI Slider occasionally fires `set` AFTER
-                    // onEditingChanged(false), flipping isScrubbing back on.
-                    // Ignore sets briefly after release.
-                    if Date() < ignoreSlideSetUntil { return }
-                    scrub = min(max(0, newValue), safeDur)
-                    isScrubbing = true
-                }
-            ), in: 0...safeDur, onEditingChanged: { editing in
-                if !editing {
-                    player.seek(to: scrub)
-                    ignoreSlideSetUntil = Date().addingTimeInterval(0.4)
-                    // Delay flipping isScrubbing so the slider keeps showing
-                    // `scrub` until SwiftUI has redrawn with the new
-                    // (optimistically updated) currentTime. Prevents a
-                    // one-frame flick to the old position.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        isScrubbing = false
-                    }
-                }
-            })
-            HStack {
-                Text((isScrubbing ? scrub : player.currentTime).mmSS)
-                Spacer()
-                Text(player.duration.mmSS)
-            }
-            .font(.caption).foregroundStyle(.secondary)
-        }
-    }
 
     private var controls: some View {
         HStack(spacing: 30) {
@@ -491,6 +443,49 @@ struct SleepTimerSheet: View {
 }
 
 // MARK: - Now Playing actions sheet
+
+/// Playback scrubber. Observes the lightweight `PlaybackClock` (not the whole
+/// AudioPlayer) so the ~2Hz position updates re-render only this tiny view —
+/// the parent Now Playing screen (and anything it presents) stays still.
+struct ScrubBar: View {
+    @EnvironmentObject private var player: AudioPlayer
+    @ObservedObject var clock: PlaybackClock
+    @State private var scrub: Double = 0
+    @State private var isScrubbing = false
+    @State private var ignoreSlideSetUntil: Date = .distantPast
+
+    var body: some View {
+        let safeDur = (player.duration.isFinite && player.duration > 0) ? player.duration : 1
+        let safeCur = clock.currentTime.isFinite ? clock.currentTime : 0
+        VStack(spacing: 4) {
+            Slider(value: Binding(
+                get: {
+                    let raw = isScrubbing ? scrub : safeCur
+                    return min(max(0, raw), safeDur)
+                },
+                set: { newValue in
+                    if Date() < ignoreSlideSetUntil { return }
+                    scrub = min(max(0, newValue), safeDur)
+                    isScrubbing = true
+                }
+            ), in: 0...safeDur, onEditingChanged: { editing in
+                if !editing {
+                    player.seek(to: scrub)
+                    ignoreSlideSetUntil = Date().addingTimeInterval(0.4)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        isScrubbing = false
+                    }
+                }
+            })
+            HStack {
+                Text((isScrubbing ? scrub : safeCur).mmSS)
+                Spacer()
+                Text(player.duration.mmSS)
+            }
+            .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
 
 struct NowPlayingActionsSheet: View {
     @EnvironmentObject var player: AudioPlayer

@@ -5,6 +5,8 @@ struct LyricsView: View {
     @Binding var isPresented: Bool
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var player: AudioPlayer
+    // Playback position now lives on its own observable; observe it for sync.
+    @ObservedObject private var clock = AudioPlayer.shared.clock
     @State private var lyrics: Lyrics = .empty
     @State private var loading = false
     @State private var lastItemId: String?
@@ -121,7 +123,7 @@ struct LyricsView: View {
 
     private var currentLineId: UUID? {
         guard lyrics.isSynced else { return nil }
-        let t = player.currentTime
+        let t = clock.currentTime
         var best: LyricsLine?
         for line in lyrics.lines where (line.timestamp ?? -1) <= t {
             best = line

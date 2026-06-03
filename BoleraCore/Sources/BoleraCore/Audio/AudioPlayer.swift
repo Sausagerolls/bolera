@@ -334,8 +334,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // If a crossfade is mid-flight, the incoming track is playing on the
         // inactive player too — pausing only the active one left it audible.
         // Cancel the fade and snap back to the track shown in the player so a
-        // pause actually silences everything.
-        if crossfadeTimer != nil {
+        // pause actually silences everything. Check crossfadeStartedFor too:
+        // it's set before the timer (during the incoming track's async asset
+        // load), so a pause in that window would otherwise miss this branch.
+        if crossfadeTimer != nil || crossfadeStartedFor != nil {
             cancelCrossfade()
             inactivePlayer.pause()
             inactivePlayer.replaceCurrentItem(with: nil)
@@ -724,6 +726,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
         installTapAsync(processor: processor, asset: asset, on: item) { [weak self] in
             guard let self = self else { return }
+            // The continuation fires async — if the user paused (which cancels
+            // the crossfade) in the meantime, don't resurrect the incoming
+            // track on the inactive player.
+            guard self.crossfadeStartedFor != nil, self.isPlaying else { return }
             self.inactivePlayer.replaceCurrentItem(with: item)
             self.inactivePlayer.volume = 0
             self.inactivePlayer.play()

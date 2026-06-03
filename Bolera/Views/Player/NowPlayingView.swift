@@ -85,7 +85,12 @@ struct NowPlayingContent: View {
             scrub = 0
         }
         .sheet(isPresented: $showQueue) {
-            QueueView().presentationDetents([.medium, .large])
+            QueueView()
+                .presentationDetents([.medium, .large])
+                // NowPlaying re-renders ~2Hz (progress); without this the
+                // animated re-render leaked into the sheet and pulsed the
+                // Queue menu's destructive row + divider.
+                .transaction { $0.animation = nil }
         }
         .sheet(isPresented: $showLyrics) {
             LyricsView(isPresented: $showLyrics)

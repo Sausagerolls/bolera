@@ -68,6 +68,7 @@ struct MainTabView: View {
 /// visible tab, producing jitter.)
 private struct MiniPlayerOverlay: View {
     @EnvironmentObject var visibility: PlayerVisibilityState
+    @Environment(\.horizontalSizeClass) private var hSize
     @Binding var showNowPlaying: Bool
 
     var body: some View {
@@ -76,7 +77,12 @@ private struct MiniPlayerOverlay: View {
                 .contentShape(Rectangle())
                 .onTapGesture { showNowPlaying = true }
                 .padding(.horizontal, 8)
-                .padding(.bottom, 60)
+                // Compact width (iPhone, iPad slide-over/narrow split) puts the
+                // TabView's bar at the bottom, so lift the mini player clear of
+                // it. Regular width (iPad full screen) moves the bar to the top,
+                // leaving the bottom edge free — a 60pt lift there just floats
+                // the player above an empty gap, so use a small margin instead.
+                .padding(.bottom, hSize == .compact ? 60 : 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }

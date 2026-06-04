@@ -97,6 +97,9 @@ public final class LibraryStore: ObservableObject {
         recentlyPlayedAlbums = LibraryCache.shared.read("home.recentlyPlayedAlbums", as: [BaseItem].self) ?? []
         topPlayedTracks = LibraryCache.shared.read("home.topPlayedTracks", as: [BaseItem].self) ?? []
         favoriteAlbums = LibraryCache.shared.read("home.favoriteAlbums", as: [BaseItem].self) ?? []
+        // Seed the Recently Played widget from cache so it has content on a cold
+        // launch before the network refresh lands.
+        RecentTracksWidgetExport.export(recentlyPlayed, client: nil)
     }
 
     public func refresh(client: JellyfinClient) async {
@@ -118,6 +121,7 @@ public final class LibraryStore: ObservableObject {
             // Albums get the visibility filter; track lists also get the ignore filter.
             recentlyAdded = visibility.filter(a)
             recentlyPlayed = Array(ignored.filter(visibility.filter(pt)).prefix(24))
+            RecentTracksWidgetExport.export(recentlyPlayed, client: client)
             recentlyPlayedAlbums = recentAlbums
             topPlayedTracks = ignored.filter(visibility.filter(tt))
             favoriteAlbums = visibility.filter(fav)
@@ -147,6 +151,7 @@ public final class LibraryStore: ObservableObject {
         func cached(_ key: String) -> [BaseItem] { LibraryCache.shared.read(key, as: [BaseItem].self) ?? [] }
         recentlyAdded = visibility.filter(cached("home.recentlyAdded"))
         recentlyPlayed = Array(ignored.filter(visibility.filter(cached("home.recentlyPlayed"))).prefix(24))
+        RecentTracksWidgetExport.export(recentlyPlayed, client: nil)
         recentlyPlayedAlbums = cached("home.recentlyPlayedAlbums")   // derived stubs; already scoped
         topPlayedTracks = ignored.filter(visibility.filter(cached("home.topPlayedTracks")))
         favoriteAlbums = visibility.filter(cached("home.favoriteAlbums"))

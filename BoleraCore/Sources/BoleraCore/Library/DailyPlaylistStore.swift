@@ -187,6 +187,7 @@ public final class DailyPlaylistStore: ObservableObject {
         built = nameMixesByArtist(built)
         playlists = built
         persistPlaylists()
+        MixesWidgetExport.export(playlists, artwork: artworkByPlaylist)
 
         // Generate artwork (async, doesn't block UI).
         Task { await renderAllArtwork(auth: auth, client: client) }
@@ -464,6 +465,7 @@ public final class DailyPlaylistStore: ObservableObject {
                 saveArtworkToDisk(img, id: playlist.id)
             }
         }
+        MixesWidgetExport.export(playlists, artwork: artworkByPlaylist)
     }
 
     private func artworkPath(id: UUID) -> URL {
@@ -519,6 +521,7 @@ public final class DailyPlaylistStore: ObservableObject {
                 artworkByPlaylist[p.id] = img
             }
         }
+        MixesWidgetExport.export(playlists, artwork: artworkByPlaylist)
     }
 
     // MARK: - Theme bank

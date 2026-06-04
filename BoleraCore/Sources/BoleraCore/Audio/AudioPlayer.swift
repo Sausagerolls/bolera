@@ -7,6 +7,9 @@ import UIKit
 #elseif canImport(AppKit)
 import AppKit
 #endif
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
 
 public enum RepeatMode: Int {
     case off, all, one
@@ -117,6 +120,17 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private var trackStartedAt: Date?
     private var hasScrobbledCurrent: Bool = false
     private var hasUpdatedNowPlayingCurrent: Bool = false
+
+    // Now Playing widget change-detection. `updateNowPlaying()` runs on every
+    // 0.5s tick, but the widget only needs a fresh snapshot (+ a timeline
+    // reload) when something it shows as discrete state changes: the track,
+    // play/pause, presence of a track, or the cover finishing its async load.
+    // Comparing against these last-published values turns the per-tick calls
+    // into no-ops and prevents a reloadAllTimelines() storm.
+    private var lastWidgetTrackId: String?
+    private var lastWidgetIsPlaying: Bool?
+    private var lastWidgetHasTrack: Bool?
+    private var lastWidgetHadArtwork: Bool?
 
     /// Delays the Jellyfin "playback started" report so a quick skip (track
     /// changed within `startReportDelay`) never registers the track as played —
@@ -317,6 +331,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         queue = []
         originalQueue = []
         currentIndex = 0
+        publishWidgetSnapshot()
     }
 
     // MARK: - Transport
@@ -370,6 +385,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // with a placeholder image until the user pressed play. The next
         // loadCurrent() resets artwork for the incoming track anyway.
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        publishWidgetSnapshot()
     }
 
     public func next() {
@@ -1128,6 +1144,64 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // mid-playback unless we publish the explicit state too.
         #if canImport(UIKit) && !os(watchOS)
         MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused
+        #endif
+        publishWidgetSnapshot()
+    }
+
+    // MARK: - Now Playing widget snapshot
+
+    /// Mirror the current playback state into the App Group so the Now Playing
+    /// widget can render it, and reload the widget timelines — but only when a
+    /// field the widget displays as discrete state actually changed. Called
+    /// from `updateNowPlaying()` (every track change / play-pause / seek / tick),
+    /// `stop()` and `clearQueue()`. The per-tick calls short-circuit on the
+    /// change-detection guard so they cost a few comparisons and nothing else.
+    private func publishWidgetSnapshot() {
+        let item = current
+        let hasTrack = item != nil
+        let id = item?.Id ?? ""
+        let playing = isPlaying
+        let hasArtwork = artwork != nil
+
+        let changed =
+            id != lastWidgetTrackId ||
+            playing != lastWidgetIsPlaying ||
+            hasTrack != lastWidgetHasTrack ||
+            hasArtwork != lastWidgetHadArtwork
+        guard changed else { return }
+
+        lastWidgetTrackId = id
+        lastWidgetIsPlaying = playing
+        lastWidgetHasTrack = hasTrack
+        lastWidgetHadArtwork = hasArtwork
+
+        let artworkPath: String?
+        if hasTrack {
+            artworkPath = NowPlayingSharedStore.writeArtwork(artwork)
+        } else {
+            NowPlayingSharedStore.clearArtwork()
+            artworkPath = nil
+        }
+
+        let snapshot = NowPlayingSnapshot(
+            hasTrack: hasTrack,
+            trackId: id,
+            title: item?.Name ?? "",
+            artist: item?.primaryArtistName ?? "",
+            album: item?.Album,
+            isPlaying: playing,
+            duration: duration,
+            elapsed: currentTime,
+            anchorDate: Date(),
+            artworkRelativePath: artworkPath
+        )
+        NowPlayingSharedStore.write(snapshot)
+        reloadWidgetTimelines()
+    }
+
+    private func reloadWidgetTimelines() {
+        #if canImport(WidgetKit)
+        WidgetCenter.shared.reloadAllTimelines()
         #endif
     }
 

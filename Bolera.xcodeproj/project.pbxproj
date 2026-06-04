@@ -7,9 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		58E9F87B1943035B3E1FB43F /* NowPlayingWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EDC68964DF317F35CAF81B1 /* NowPlayingWidget.swift */; };
+		7B0C0F47E5A5597110A52666 /* BoleraWidgetsMac.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 92AD6BF5FE205A74F3320C6D /* BoleraWidgetsMac.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		826BD016DCAAB1F3EAAE61ED /* BoleraWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = D837FF5898572AF02E362A3B /* BoleraWidgetsBundle.swift */; };
+		84B229843A67C0F966D206C9 /* NowPlayingWidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 225B488CF4BB4F56C417D8EA /* NowPlayingWidgetViews.swift */; };
+		89B585CDFFDCC7E4262A21E6 /* RecentlyPlayedWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CDD17D74FE3C50EBD3A2C5E /* RecentlyPlayedWidget.swift */; };
+		9CDC791C49FC681B801EF6B3 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D3E8BD79305DFF594A8D5E41 /* Cocoa.framework */; };
+		9E622E6A6161A22A2D4515F0 /* MixesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36FFB66BC38B99EE8423E415 /* MixesWidget.swift */; };
 		B0000001000000000000A001 /* BoleraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000001000000000000A001 /* BoleraApp.swift */; };
-		B0000057000000000000A057 /* CarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000057000000000000A057 /* CarPlaySceneDelegate.swift */; };
-		B0000058000000000000A058 /* CarPlayCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000058000000000000A058 /* CarPlayCoordinator.swift */; };
 		B0000008000000000000A008 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000008000000000000A008 /* Extensions.swift */; };
 		B0000009000000000000A009 /* ServerConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000009000000000000A009 /* ServerConnectionView.swift */; };
 		B000000A000000000000A00A /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000A000000000000A00A /* MainTabView.swift */; };
@@ -29,7 +34,6 @@
 		B000001D000000000000A01D /* EQView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001D000000000000A01D /* EQView.swift */; };
 		B000001E000000000000A01E /* LastFmSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001E000000000000A01E /* LastFmSettingsView.swift */; };
 		B0000020000000000000A020 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0000020000000000000A020 /* Assets.xcassets */; };
-		F0000051000000000000A051 /* Assets.xcassets in Resources (mac) */ = {isa = PBXBuildFile; fileRef = A0000020000000000000A020 /* Assets.xcassets */; };
 		B0000021000000000000A021 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0000021000000000000A021 /* Preview Assets.xcassets */; };
 		B0000025000000000000A025 /* BoleraCore in Frameworks */ = {isa = PBXBuildFile; productRef = H0000001000000000000H001 /* BoleraCore */; };
 		B0000030000000000000A030 /* PaywallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000030000000000000A030 /* PaywallView.swift */; };
@@ -52,14 +56,76 @@
 		B0000052000000000000A052 /* MacNavCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000052000000000000A052 /* MacNavCoordinator.swift */; };
 		B0000053000000000000A053 /* AlbumDetail_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000053000000000000A053 /* AlbumDetail_Mac.swift */; };
 		B0000054000000000000A054 /* ArtistDetail_Mac.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000054000000000000A054 /* ArtistDetail_Mac.swift */; };
+		B0000057000000000000A057 /* CarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000057000000000000A057 /* CarPlaySceneDelegate.swift */; };
+		B0000058000000000000A058 /* CarPlayCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000058000000000000A058 /* CarPlayCoordinator.swift */; };
+		B90546022B1B9A6F8587510A /* WidgetSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1812D460FDA985D14FC61C83 /* WidgetSupport.swift */; };
+		BC3745EFB535123E2F00ECAD /* MixesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36FFB66BC38B99EE8423E415 /* MixesWidget.swift */; };
+		C2605D39C44B79FF85DF9760 /* BoleraCore in Frameworks */ = {isa = PBXBuildFile; productRef = AFA9F856AAE3059B01BDBC14 /* BoleraCore */; };
+		C9CAD961E7F86E0FA7B962E6 /* BoleraCore in Frameworks */ = {isa = PBXBuildFile; productRef = F0EC47C61CDBD0C5070BB6CD /* BoleraCore */; };
+		CA426C69214B6C17B8359FC9 /* NowPlayingWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EDC68964DF317F35CAF81B1 /* NowPlayingWidget.swift */; };
+		CE9D242106A92F22F8BA9DF1 /* BoleraWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = D837FF5898572AF02E362A3B /* BoleraWidgetsBundle.swift */; };
+		DAEBB682F1D9FD4F11CCD11A /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 61836F8CBCF57F20256C3247 /* Foundation.framework */; };
+		EF8F52DF8D63B11F40382C34 /* BoleraWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EEE5D00872AD429F605B8B9F /* BoleraWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F0000051000000000000A051 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0000020000000000000A020 /* Assets.xcassets */; };
+		F01ABEA592D27EAB33666C7F /* WidgetSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1812D460FDA985D14FC61C83 /* WidgetSupport.swift */; };
+		F3F8292556A44D6A67DDB077 /* RecentlyPlayedWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CDD17D74FE3C50EBD3A2C5E /* RecentlyPlayedWidget.swift */; };
+		FFF8645C97F411F04BD0B900 /* NowPlayingWidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 225B488CF4BB4F56C417D8EA /* NowPlayingWidgetViews.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		365DF708BD787309C98A141E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F0000000000000000000F000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A05F1F68CCBEBEC1F469EF68;
+			remoteInfo = BoleraWidgetsMac;
+		};
+		B6DF60D23F827868C96639E7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F0000000000000000000F000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 84714D3A2A84DB1D3D91FC97;
+			remoteInfo = BoleraWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		011F0F02CE9555EA3F9586C0 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				EF8F52DF8D63B11F40382C34 /* BoleraWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BE949CFA32C5D17BB58CA4CC /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				7B0C0F47E5A5597110A52666 /* BoleraWidgetsMac.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		0CDD17D74FE3C50EBD3A2C5E /* RecentlyPlayedWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecentlyPlayedWidget.swift; sourceTree = "<group>"; };
+		1812D460FDA985D14FC61C83 /* WidgetSupport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WidgetSupport.swift; sourceTree = "<group>"; };
+		1EC44C2188E668B6A960410B /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		225B488CF4BB4F56C417D8EA /* NowPlayingWidgetViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NowPlayingWidgetViews.swift; sourceTree = "<group>"; };
+		36FFB66BC38B99EE8423E415 /* MixesWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MixesWidget.swift; sourceTree = "<group>"; };
+		61836F8CBCF57F20256C3247 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		703B3613AF633D7D7595A844 /* BoleraWidgetsMac.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BoleraWidgetsMac.entitlements; sourceTree = "<group>"; };
+		92AD6BF5FE205A74F3320C6D /* BoleraWidgetsMac.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BoleraWidgetsMac.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		9EDC68964DF317F35CAF81B1 /* NowPlayingWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NowPlayingWidget.swift; sourceTree = "<group>"; };
 		A0000000000000000000A000 /* Bolera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bolera.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A0000001000000000000A001 /* BoleraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoleraApp.swift; sourceTree = "<group>"; };
-		A0000057000000000000A057 /* CarPlaySceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlaySceneDelegate.swift; sourceTree = "<group>"; };
-		A0000058000000000000A058 /* CarPlayCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlayCoordinator.swift; sourceTree = "<group>"; };
-		C0000057000000000000C057 /* CarPlay */ = {isa = PBXGroup; children = (A0000057000000000000A057 /* CarPlaySceneDelegate.swift */, A0000058000000000000A058 /* CarPlayCoordinator.swift */); path = CarPlay; sourceTree = "<group>"; };
 		A0000008000000000000A008 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		A0000009000000000000A009 /* ServerConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionView.swift; sourceTree = "<group>"; };
 		A000000A000000000000A00A /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
@@ -105,9 +171,33 @@
 		A0000052000000000000A052 /* MacNavCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacNavCoordinator.swift; sourceTree = "<group>"; };
 		A0000053000000000000A053 /* AlbumDetail_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetail_Mac.swift; sourceTree = "<group>"; };
 		A0000054000000000000A054 /* ArtistDetail_Mac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistDetail_Mac.swift; sourceTree = "<group>"; };
+		A0000057000000000000A057 /* CarPlaySceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlaySceneDelegate.swift; sourceTree = "<group>"; };
+		A0000058000000000000A058 /* CarPlayCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlayCoordinator.swift; sourceTree = "<group>"; };
+		CF86668962E0CF6EA5C9153F /* BoleraWidgets.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BoleraWidgets.entitlements; sourceTree = "<group>"; };
+		D3E8BD79305DFF594A8D5E41 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		D837FF5898572AF02E362A3B /* BoleraWidgetsBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BoleraWidgetsBundle.swift; sourceTree = "<group>"; };
+		EEE5D00872AD429F605B8B9F /* BoleraWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BoleraWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		6B2630FC9FC052A677786506 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DAEBB682F1D9FD4F11CCD11A /* Foundation.framework in Frameworks */,
+				C2605D39C44B79FF85DF9760 /* BoleraCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9BA2A9DBE6296A5BD7DDB1E5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9CDC791C49FC681B801EF6B3 /* Cocoa.framework in Frameworks */,
+				C9CAD961E7F86E0FA7B962E6 /* BoleraCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D0000001000000000000D001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -127,6 +217,40 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		2F8657308D5E2D677FF294C4 /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				D3E8BD79305DFF594A8D5E41 /* Cocoa.framework */,
+			);
+			name = "OS X";
+			sourceTree = "<group>";
+		};
+		30B1C4F4C1E9873D62E710E2 /* BoleraWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				D837FF5898572AF02E362A3B /* BoleraWidgetsBundle.swift */,
+				9EDC68964DF317F35CAF81B1 /* NowPlayingWidget.swift */,
+				225B488CF4BB4F56C417D8EA /* NowPlayingWidgetViews.swift */,
+				1EC44C2188E668B6A960410B /* Info.plist */,
+				CF86668962E0CF6EA5C9153F /* BoleraWidgets.entitlements */,
+				703B3613AF633D7D7595A844 /* BoleraWidgetsMac.entitlements */,
+				36FFB66BC38B99EE8423E415 /* MixesWidget.swift */,
+				0CDD17D74FE3C50EBD3A2C5E /* RecentlyPlayedWidget.swift */,
+				1812D460FDA985D14FC61C83 /* WidgetSupport.swift */,
+			);
+			name = BoleraWidgets;
+			path = BoleraWidgets;
+			sourceTree = "<group>";
+		};
+		B8CA1DCF96FC1E5A6EB750A4 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				D1EA1928FA1360E6DDEA6C39 /* iOS */,
+				2F8657308D5E2D677FF294C4 /* OS X */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		C0000000000000000000C000 = {
 			isa = PBXGroup;
 			children = (
@@ -134,6 +258,8 @@
 				C0001001000000000000C101 /* Bolera-mac */,
 				C0000100000000000000C100 /* Packages */,
 				C0000099000000000000C099 /* Products */,
+				30B1C4F4C1E9873D62E710E2 /* BoleraWidgets */,
+				B8CA1DCF96FC1E5A6EB750A4 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -251,6 +377,15 @@
 			path = Settings;
 			sourceTree = "<group>";
 		};
+		C0000057000000000000C057 /* CarPlay */ = {
+			isa = PBXGroup;
+			children = (
+				A0000057000000000000A057 /* CarPlaySceneDelegate.swift */,
+				A0000058000000000000A058 /* CarPlayCoordinator.swift */,
+			);
+			path = CarPlay;
+			sourceTree = "<group>";
+		};
 		C0000098000000000000C098 /* Preview Content */ = {
 			isa = PBXGroup;
 			children = (
@@ -264,6 +399,8 @@
 			children = (
 				A0000000000000000000A000 /* Bolera.app */,
 				A000004C000000000000A04C /* Bolera.app */,
+				EEE5D00872AD429F605B8B9F /* BoleraWidgets.appex */,
+				92AD6BF5FE205A74F3320C6D /* BoleraWidgetsMac.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -333,9 +470,57 @@
 			path = Pro;
 			sourceTree = "<group>";
 		};
+		D1EA1928FA1360E6DDEA6C39 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				61836F8CBCF57F20256C3247 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		84714D3A2A84DB1D3D91FC97 /* BoleraWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F5B30E9DC03D6A7E1C04F74A /* Build configuration list for PBXNativeTarget "BoleraWidgets" */;
+			buildPhases = (
+				521713615C20CC318017F3F6 /* Sources */,
+				6B2630FC9FC052A677786506 /* Frameworks */,
+				29749CB53877385E777D7B43 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BoleraWidgets;
+			packageProductDependencies = (
+				AFA9F856AAE3059B01BDBC14 /* BoleraCore */,
+			);
+			productName = BoleraWidgets;
+			productReference = EEE5D00872AD429F605B8B9F /* BoleraWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		A05F1F68CCBEBEC1F469EF68 /* BoleraWidgetsMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C471B02E22523142D7460BEB /* Build configuration list for PBXNativeTarget "BoleraWidgetsMac" */;
+			buildPhases = (
+				09784F568B630757322140DB /* Sources */,
+				9BA2A9DBE6296A5BD7DDB1E5 /* Frameworks */,
+				20731B05AF30A50A80742EA1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BoleraWidgetsMac;
+			packageProductDependencies = (
+				F0EC47C61CDBD0C5070BB6CD /* BoleraCore */,
+			);
+			productName = BoleraWidgetsMac;
+			productReference = 92AD6BF5FE205A74F3320C6D /* BoleraWidgetsMac.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		F0000001000000000000F001 /* Bolera */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = E0000003000000000000E003 /* Build configuration list for PBXNativeTarget "Bolera" */;
@@ -343,10 +528,12 @@
 				D0000002000000000000D002 /* Sources */,
 				D0000001000000000000D001 /* Frameworks */,
 				D0000003000000000000D003 /* Resources */,
+				011F0F02CE9555EA3F9586C0 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A2C399A54B0F3584018AF08F /* PBXTargetDependency */,
 			);
 			name = Bolera;
 			packageProductDependencies = (
@@ -363,10 +550,12 @@
 				D0000004000000000000D004 /* Sources */,
 				D0000005000000000000D005 /* Frameworks */,
 				D0000006000000000000D006 /* Resources */,
+				BE949CFA32C5D17BB58CA4CC /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				974B1299148496131D9D21B5 /* PBXTargetDependency */,
 			);
 			name = "Bolera-mac";
 			packageProductDependencies = (
@@ -409,11 +598,27 @@
 			targets = (
 				F0000001000000000000F001 /* Bolera */,
 				F0000002000000000000F002 /* Bolera-mac */,
+				84714D3A2A84DB1D3D91FC97 /* BoleraWidgets */,
+				A05F1F68CCBEBEC1F469EF68 /* BoleraWidgetsMac */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		20731B05AF30A50A80742EA1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		29749CB53877385E777D7B43 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D0000003000000000000D003 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -427,13 +632,39 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F0000051000000000000A051 /* Assets.xcassets in Resources (mac) */,
+				F0000051000000000000A051 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		09784F568B630757322140DB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CE9D242106A92F22F8BA9DF1 /* BoleraWidgetsBundle.swift in Sources */,
+				CA426C69214B6C17B8359FC9 /* NowPlayingWidget.swift in Sources */,
+				84B229843A67C0F966D206C9 /* NowPlayingWidgetViews.swift in Sources */,
+				9E622E6A6161A22A2D4515F0 /* MixesWidget.swift in Sources */,
+				89B585CDFFDCC7E4262A21E6 /* RecentlyPlayedWidget.swift in Sources */,
+				F01ABEA592D27EAB33666C7F /* WidgetSupport.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		521713615C20CC318017F3F6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				826BD016DCAAB1F3EAAE61ED /* BoleraWidgetsBundle.swift in Sources */,
+				58E9F87B1943035B3E1FB43F /* NowPlayingWidget.swift in Sources */,
+				FFF8645C97F411F04BD0B900 /* NowPlayingWidgetViews.swift in Sources */,
+				BC3745EFB535123E2F00ECAD /* MixesWidget.swift in Sources */,
+				F3F8292556A44D6A67DDB077 /* RecentlyPlayedWidget.swift in Sources */,
+				B90546022B1B9A6F8587510A /* WidgetSupport.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D0000002000000000000D002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -490,7 +721,76 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		974B1299148496131D9D21B5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BoleraWidgetsMac;
+			target = A05F1F68CCBEBEC1F469EF68 /* BoleraWidgetsMac */;
+			targetProxy = 365DF708BD787309C98A141E /* PBXContainerItemProxy */;
+		};
+		A2C399A54B0F3584018AF08F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BoleraWidgets;
+			target = 84714D3A2A84DB1D3D91FC97 /* BoleraWidgets */;
+			targetProxy = B6DF60D23F827868C96639E7 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		0A97FD82C0CD9138314EBA0C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = BoleraWidgets/BoleraWidgetsMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 22;
+				DEVELOPMENT_TEAM = J4UJD4Z33J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BoleraWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Bolera;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.giantmushroom.bolera.BoleraWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		111BD2E2EACA79FAC09231C4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BoleraWidgets/BoleraWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 25;
+				DEVELOPMENT_TEAM = J4UJD4Z33J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BoleraWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Bolera;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.giantmushroom.bolera.BoleraWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		E0000001000000000000E001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -728,9 +1028,73 @@
 			};
 			name = Release;
 		};
+		E9AF6300341E23B4484E7631 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BoleraWidgets/BoleraWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 25;
+				DEVELOPMENT_TEAM = J4UJD4Z33J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BoleraWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Bolera;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.giantmushroom.bolera.BoleraWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		EABA5FAC324465A8AF136671 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = BoleraWidgets/BoleraWidgetsMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 22;
+				DEVELOPMENT_TEAM = J4UJD4Z33J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BoleraWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Bolera;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.giantmushroom.bolera.BoleraWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		C471B02E22523142D7460BEB /* Build configuration list for PBXNativeTarget "BoleraWidgetsMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EABA5FAC324465A8AF136671 /* Release */,
+				0A97FD82C0CD9138314EBA0C /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		E0000000000000000000E000 /* Build configuration list for PBXProject "Bolera" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -758,6 +1122,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		F5B30E9DC03D6A7E1C04F74A /* Build configuration list for PBXNativeTarget "BoleraWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E9AF6300341E23B4484E7631 /* Release */,
+				111BD2E2EACA79FAC09231C4 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -768,6 +1141,16 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		AFA9F856AAE3059B01BDBC14 /* BoleraCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = G0000001000000000000G001 /* XCLocalSwiftPackageReference "BoleraCore" */;
+			productName = BoleraCore;
+		};
+		F0EC47C61CDBD0C5070BB6CD /* BoleraCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = G0000001000000000000G001 /* XCLocalSwiftPackageReference "BoleraCore" */;
+			productName = BoleraCore;
+		};
 		H0000001000000000000H001 /* BoleraCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BoleraCore;

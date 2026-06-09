@@ -169,7 +169,72 @@ public struct JellyfinClient {
 
     // MARK: - Authentication
 
-    public func authenticate(username: String, password: String) async throws -> AuthResponse {
+    /// Authenticate, with optional 2FA `code`.
+    ///
+    /// When a `code` is supplied we first try JellyfinSecurity's native code
+    /// endpoint `POST /TwoFactorAuth/Authenticate` — it takes a SEPARATE code
+    /// field, verifies the session server-side, and returns a normal Jellyfin
+    /// token (the proper "type your authenticator code" path). If that endpoint
+    /// isn't present (404 — plugin not installed) we fall back to the append
+    /// convention some other TOTP plugins use (`Pw = password + code`). With no
+    /// code we just do a plain `AuthenticateByName`.
+    public func authenticate(username: String, password: String, code: String? = nil) async throws -> AuthResponse {
+        let trimmedCode = code?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedCode.isEmpty {
+            if let res = try await authenticateTwoFactor(username: username, password: password, code: trimmedCode) {
+                return res
+            }
+            // Endpoint absent → append-style TOTP plugin fallback.
+            return try await authenticateByName(username: username, password: password + trimmedCode, codeProvided: true)
+        }
+        return try await authenticateByName(username: username, password: password, codeProvided: false)
+    }
+
+    /// JellyfinSecurity native one-shot code login. Returns the token on success,
+    /// `nil` if the endpoint is absent (404 → caller falls back), throws a clear
+    /// error for bad credentials / wrong code / rate-limit.
+    private func authenticateTwoFactor(username: String, password: String, code: String) async throws -> AuthResponse? {
+        struct Body: Encodable { let Username: String; let Password: String; let Code: String; let TrustDevice: Bool }
+        let url = baseURL.appendingPathComponent("TwoFactorAuth/Authenticate")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(auth.authHeader(), forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONEncoder().encode(Body(Username: username, Password: password, Code: code, TrustDevice: true))
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await Self.apiSession.data(for: req)
+        } catch {
+            await ConnectivityStore.shared.noteFailure(error)
+            throw error
+        }
+        guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        switch http.statusCode {
+        case 200..<300:
+            await ConnectivityStore.shared.noteSuccess()
+            return try JSONDecoder().decode(AuthResponse.self, from: data)
+        case 404:
+            return nil   // plugin not installed — fall back to AuthenticateByName
+        case 429:
+            throw APIError.message("Too many sign-in attempts. Wait a minute, then try again.")
+        case 401, 403:
+            let body = (String(data: data, encoding: .utf8) ?? "").lowercased()
+            if body.contains("username or password") {
+                throw APIError.message("Invalid username or password.")
+            }
+            if body.contains("blocked") {
+                throw APIError.message("Sign-in temporarily blocked (too many attempts). Wait a minute, then try again.")
+            }
+            throw APIError.message("Two-factor code incorrect or expired — open your authenticator app and enter a fresh 6-digit code.")
+        default:
+            throw APIError.badResponse(http.statusCode)
+        }
+    }
+
+    private func authenticateByName(username: String, password: String, codeProvided: Bool) async throws -> AuthResponse {
         let url = baseURL.appendingPathComponent("Users/AuthenticateByName")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -188,7 +253,15 @@ public struct JellyfinClient {
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401 { throw APIError.message("Invalid username or password.") }
+            if http.statusCode == 401 || http.statusCode == 403 {
+                if codeProvided {
+                    throw APIError.message("Two-factor code incorrect or expired — open your authenticator app and enter a fresh code.")
+                }
+                throw APIError.message("Sign-in failed. If your server uses two-factor auth, turn on the code field below and enter your authenticator code.")
+            }
+            if http.statusCode >= 500 {
+                throw APIError.message("The server rejected sign-in (error \(http.statusCode)). If it uses a two-factor plugin, turn on the code field and enter your authenticator code.")
+            }
             throw APIError.badResponse(http.statusCode)
         }
         await ConnectivityStore.shared.noteSuccess()
@@ -822,24 +895,56 @@ public struct JellyfinClient {
         return comps.url ?? baseURL
     }
 
-    /// Stream URL for PLAYBACK. On Wi-Fi/LAN it's the direct original (full
-    /// quality, lowest latency). On a METERED path (cellular / hotspot, e.g.
-    /// Tailscale over cellular) where the full FLAC stalls, it uses Jellyfin's
-    /// universal endpoint to PROGRESSIVE-transcode down to the user's max
-    /// bitrate — much less data, so it actually plays. Progressive (not HLS)
-    /// keeps the EQ tap working. Downloads always use `audioStreamURL`.
-    public func playbackStreamURL(for itemId: String) -> URL {
-        let maxKbps = UserDefaults.standard.object(forKey: "bolera.maxBitrate") as? Int ?? 320
-        guard ConnectivityStore.pathIsExpensive, maxKbps < 1411 else {
+    /// Max bitrate (kbps) the app will ever stream over a metered (cellular /
+    /// hotspot / Tailscale-over-cellular) path, regardless of the user's quality
+    /// setting. Raw FLAC over cellular to a LAN-only server was the #1 cause of
+    /// mid-drive stalls — a 320kbps progressive transcode is ~4× lighter and
+    /// actually sustains over a flaky link. Wi-Fi/LAN still streams full quality.
+    public static let cellularBitrateCeiling = 320
+
+    /// Stream URL for PLAYBACK.
+    /// - On Wi-Fi/LAN (not metered): the direct original file (full quality,
+    ///   byte-range seekable, lowest latency).
+    /// - On a METERED path: ALWAYS a bitrate-capped progressive transcode via
+    ///   Jellyfin's `universal` endpoint — even when the user picked Lossless,
+    ///   because raw FLAC over cellular stalls constantly. Progressive (not HLS)
+    ///   keeps the EQ tap working. `maxBitrateOverride` lets stall-recovery step
+    ///   the bitrate down further on a marginal link until it finds one that
+    ///   holds. Downloads always use `audioStreamURL` (full quality).
+    public func playbackStreamURL(for itemId: String, maxBitrateOverride: Int? = nil) -> URL {
+        // Optional CarPlay bitrate: when connected to CarPlay and the user has
+        // opted in, force a (typically lower) reliable rate so playback keeps up
+        // through patchy signal while driving — even on Wi-Fi, since they're
+        // about to leave it. This takes precedence over the normal path logic.
+        let carplayOverride = UserDefaults.standard.bool(forKey: "bolera.carplayBitrateEnabled")
+            && AudioPlayer.isCarPlayActive
+
+        // Not metered AND no CarPlay override → full-quality direct stream, which
+        // (unlike the progressive transcode) is byte-range seekable so a recovery
+        // reload resumes exactly. A flaky home Wi-Fi stalls rarely; reopening the
+        // same direct stream is the right move — don't drop to transcode here.
+        guard ConnectivityStore.pathIsExpensive || carplayOverride else {
             return audioStreamURL(for: itemId)
         }
+        // Baseline cap: an explicit CarPlay bitrate wins; otherwise the metered
+        // ceiling capping the user's quality setting.
+        let baseline: Int
+        if carplayOverride {
+            let cp = UserDefaults.standard.object(forKey: "bolera.carplayBitrate") as? Int ?? 192
+            baseline = min(cp, Self.cellularBitrateCeiling)
+        } else {
+            let userMax = UserDefaults.standard.object(forKey: "bolera.maxBitrate") as? Int ?? 320
+            baseline = min(userMax, Self.cellularBitrateCeiling)
+        }
+        // Stall recovery can only step the rate DOWN from the baseline, never up.
+        let cap = max(48, min(maxBitrateOverride ?? baseline, baseline))
         guard var comps = URLComponents(url: baseURL.appendingPathComponent("Audio/\(itemId)/universal"), resolvingAgainstBaseURL: false) else {
             return audioStreamURL(for: itemId)
         }
         comps.queryItems = [
             URLQueryItem(name: "UserId", value: auth.userId ?? ""),
             URLQueryItem(name: "DeviceId", value: AuthManager.deviceId),
-            URLQueryItem(name: "MaxStreamingBitrate", value: String(maxKbps * 1000)),
+            URLQueryItem(name: "MaxStreamingBitrate", value: String(cap * 1000)),
             URLQueryItem(name: "Container", value: "mp3,aac,m4a,flac,alac,wav,ogg,opus,webma"),
             URLQueryItem(name: "TranscodingContainer", value: "mp3"),
             URLQueryItem(name: "TranscodingProtocol", value: "http"),

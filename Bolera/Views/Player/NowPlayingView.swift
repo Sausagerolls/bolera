@@ -20,6 +20,9 @@ struct NowPlayingContent: View {
     @State private var navPath: [BaseItem] = []
     @State private var similarTracks: [BaseItem] = []
     @State private var showSimilarSheet = false
+    /// Optimistic favourite overrides keyed by track Id — flips the heart
+    /// instantly on tap; falls back to the item's own UserData otherwise.
+    @State private var favouriteOverrides: [String: Bool] = [:]
 
     /// Live drag offset for finger-following dismissal. Resets after gesture ends.
     @GestureState private var dragOffset: CGFloat = 0
@@ -33,8 +36,6 @@ struct NowPlayingContent: View {
                 Spacer(minLength: 12)
                 trackInfo
                 Spacer(minLength: 12)
-                actionRow
-                Spacer(minLength: 4)
                 ScrubBar(clock: player.clock)
                 controls
                 Spacer(minLength: 14)
@@ -62,12 +63,12 @@ struct NowPlayingContent: View {
                     // Respond to drags starting in the upper portion of the
                     // screen — handle + full album artwork. Below that the
                     // Slider and transport controls own the gesture.
-                    guard value.startLocation.y < 420 else { return }
+                    guard value.startLocation.y < 460 else { return }
                     guard abs(value.translation.height) > abs(value.translation.width) else { return }
                     state = max(0, value.translation.height)
                 }
                 .onEnded { value in
-                    guard value.startLocation.y < 420 else { return }
+                    guard value.startLocation.y < 460 else { return }
                     if value.translation.height > 100 || value.predictedEndTranslation.height > 200 {
                         collapse()
                     }
@@ -211,7 +212,7 @@ struct NowPlayingContent: View {
             }
         }
         .aspectRatio(1, contentMode: .fit)
-        .frame(maxWidth: 300, maxHeight: 300)
+        .frame(maxWidth: 360, maxHeight: 360)
         .scaleEffect(player.isPlaying ? 1.0 : 0.92)
         .animation(.spring(response: 0.45, dampingFraction: 0.7), value: player.isPlaying)
         .contentShape(Rectangle())
@@ -264,15 +265,6 @@ struct NowPlayingContent: View {
         navPath.append(BaseItem.stub(id: id, name: name, type: "MusicAlbum"))
     }
 
-    private var actionRow: some View {
-        HStack(spacing: 18) {
-            actionButton("text.quote", "Lyrics") { showLyrics = true }
-            actionButton(sleepIcon, sleepLabel, highlighted: sleepTimer.mode != .off) { showSleepSheet = true }
-            actionButton(downloadIcon, downloadLabel, highlighted: isDownloaded) { downloadCurrent() }
-        }
-        .padding(.vertical, 4)
-    }
-
     private var isDownloaded: Bool {
         guard let id = player.current?.Id else { return false }
         return downloads.isDownloaded(id)
@@ -285,27 +277,7 @@ struct NowPlayingContent: View {
         return "arrow.down.circle"
     }
 
-    private var downloadLabel: String {
-        guard let id = player.current?.Id else { return "Download" }
-        if downloads.isDownloaded(id) { return "Offline" }
-        if downloads.inProgress[id] != nil { return "Downloading" }
-        return "Download"
-    }
-
     private var sleepIcon: String { sleepTimer.mode == .off ? "moon.zzz" : "moon.zzz.fill" }
-    private var sleepLabel: String {
-        switch sleepTimer.mode {
-        case .off: return "Sleep"
-        case .duration: return formatRemaining(sleepTimer.remaining)
-        case .endOfTrack: return "End"
-        }
-    }
-
-    private func formatRemaining(_ t: TimeInterval) -> String {
-        let m = Int(t) / 60
-        let s = Int(t) % 60
-        return String(format: "%d:%02d", m, s)
-    }
 
     private func downloadCurrent() {
         guard let item = player.current, let url = auth.serverURL else { return }
@@ -316,21 +288,23 @@ struct NowPlayingContent: View {
         }
     }
 
-    private func actionButton(_ icon: String, _ title: String, highlighted: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .frame(width: 38, height: 38)
-                    .background(.ultraThinMaterial, in: Circle())
-                Text(title).font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
-            }
-            .frame(maxWidth: .infinity)
-            .foregroundStyle(highlighted ? Color.accentColor : Color.primary)
-        }
-        .buttonStyle(.plain)
+    private var isCurrentFavourited: Bool {
+        guard let item = player.current else { return false }
+        return favouriteOverrides[item.Id] ?? (item.UserData?.IsFavorite ?? false)
     }
 
+    /// Toggle favourite on the current track — flips the heart optimistically,
+    /// persists to Jellyfin, and reverts if the call fails.
+    private func toggleFavourite() {
+        guard let item = player.current, let url = auth.serverURL else { return }
+        let newValue = !isCurrentFavourited
+        favouriteOverrides[item.Id] = newValue
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        Task {
+            do { try await client.setFavorite(item.Id, favorite: newValue) }
+            catch { await MainActor.run { favouriteOverrides[item.Id] = !newValue } }
+        }
+    }
 
     private var controls: some View {
         HStack(spacing: 30) {
@@ -362,16 +336,38 @@ struct NowPlayingContent: View {
         }
     }
 
+    /// Bottom utility row — AirPlay + the moved Lyrics / Sleep / Download
+    /// controls + Queue, all inline as evenly-spaced icon buttons.
     private var bottomBar: some View {
         HStack {
             AirPlayButton()
                 .frame(width: 28, height: 28)
+            Spacer()
+            Button { toggleFavourite() } label: {
+                Image(systemName: isCurrentFavourited ? "heart.fill" : "heart")
+                    .foregroundStyle(isCurrentFavourited ? .red : .primary)
+            }
+            Spacer()
+            Button { showLyrics = true } label: {
+                Image(systemName: "text.quote")
+            }
+            Spacer()
+            Button { showSleepSheet = true } label: {
+                Image(systemName: sleepIcon)
+                    .foregroundStyle(sleepTimer.mode != .off ? Color.accentColor : .primary)
+            }
+            Spacer()
+            Button { downloadCurrent() } label: {
+                Image(systemName: downloadIcon)
+                    .foregroundStyle(isDownloaded ? Color.accentColor : .primary)
+            }
             Spacer()
             Button { showQueue = true } label: {
                 Image(systemName: "text.line.first.and.arrowtriangle.forward")
             }
         }
         .font(.title3)
+        .buttonStyle(.plain)
         .padding(.horizontal, 4)
     }
 }

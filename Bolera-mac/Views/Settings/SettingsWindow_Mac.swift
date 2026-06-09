@@ -161,8 +161,14 @@ private struct PlaybackSettings_Mac: View {
     @EnvironmentObject var player: AudioPlayer
     @EnvironmentObject var auth: AuthManager
     @ObservedObject private var live = LiveFilterStore.shared
+    @ObservedObject private var ai = CustomAIStore.shared
+    @ObservedObject private var pro = ProEntitlementStore.shared
     @Environment(\.openWindow) private var openWindow
     @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
+    @State private var showConsent = false
+    @State private var testing = false
+    @State private var testResult: String?
+    @State private var testOK = false
 
     var body: some View {
         Form {
@@ -184,7 +190,47 @@ private struct PlaybackSettings_Mac: View {
             }
             Section("AI Features") {
                 Toggle("Enable AI Mood Mixes", isOn: $moodMixEnabled)
-                Text("Make-a-Mix uses Apple Intelligence to turn a mood phrase into a playlist. Last.fm sign-in dramatically improves results.")
+                Text("Make-a-Mix turns a mood phrase into a playlist. Last.fm sign-in dramatically improves results.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("AI Engine") {
+                if pro.isPro {
+                    Toggle("Use a custom AI server", isOn: $ai.enabled)
+                    if ai.enabled {
+                        Picker("Provider", selection: $ai.providerId) {
+                            ForEach(AIProviders.all) { Text($0.name).tag($0.id) }
+                        }
+                        TextField("Server URL", text: $ai.baseURL)
+                            .autocorrectionDisabled()
+                        if ai.preset.requiresKey || !ai.apiKey.isEmpty {
+                            SecureField("API Key", text: $ai.apiKey)
+                        }
+                        TextField("Model", text: $ai.model)
+                            .autocorrectionDisabled()
+                        if let help = ai.preset.helpURL, let url = URL(string: help) {
+                            Link("Get \(ai.preset.name) details", destination: url).font(.caption)
+                        }
+                        if ai.isConfigured && !ai.consentGranted {
+                            Button {
+                                showConsent = true
+                            } label: {
+                                Label("Review data sharing & allow", systemImage: "hand.raised")
+                            }
+                        }
+                        HStack {
+                            Button("Test Connection") { runTest() }
+                                .disabled(testing || !ai.isConfigured)
+                            if testing { ProgressView().controlSize(.small) }
+                        }
+                        if let r = testResult {
+                            Text(r).font(.caption).foregroundStyle(testOK ? .green : .red)
+                        }
+                    }
+                } else {
+                    Text("Custom AI server requires Bolera Pro.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Off uses Apple's on-device intelligence — private, nothing leaves your Mac. A custom server sends only the mood text you type to the endpoint you choose, after you allow it. Works with OpenAI, OpenRouter, Groq, and self-hosted Ollama / LM Studio.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Mixes & Radio") {
@@ -200,6 +246,44 @@ private struct PlaybackSettings_Mac: View {
         }
         .formStyle(.grouped)
         .padding()
+        .sheet(isPresented: $showConsent) { consentSheet }
+    }
+
+    /// Explicit data-sharing consent (App Store guideline 5.1.2(i)).
+    private var consentSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Share mood text with your AI server?", systemImage: "hand.raised.fill")
+                .font(.title3).bold()
+            Text("When you use Make-a-Mix, Bolera will send the mood phrase you type to:")
+            Text(ai.endpointHost.isEmpty ? ai.baseURL : ai.endpointHost)
+                .font(.headline).foregroundStyle(.tint)
+            Text("That phrase is the only thing sent — never your library, account, or sign-in. This is a server you configured; its operator's own privacy terms apply. You can turn this off anytime.")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { showConsent = false }
+                Button("Allow") { ai.grantConsent(); showConsent = false }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+    }
+
+    private func runTest() {
+        testing = true
+        testResult = nil
+        Task {
+            do {
+                let r = try await ai.test()
+                testResult = "Works — sample tags: " + r.tags.prefix(3).joined(separator: ", ")
+                testOK = true
+            } catch {
+                testResult = error.localizedDescription
+                testOK = false
+            }
+            testing = false
+        }
     }
 
     private func refreshLiveAlbums() {

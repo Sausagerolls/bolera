@@ -23,6 +23,8 @@ struct BoleraMacApp: App {
         LegacyMigration.runIfNeeded()
         AudioPlayer.shared.authManager = AuthManager.shared
         AudioPlayer.shared.configureAudioSession()
+        // Resume last session's queue, paused (nothing streams until play).
+        AudioPlayer.shared.restorePlaybackState()
     }
 
     var body: some Scene {

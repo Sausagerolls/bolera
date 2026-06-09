@@ -24,6 +24,9 @@ struct BoleraApp: App {
         // start playback before the SwiftUI scene has appeared.
         AudioPlayer.shared.authManager = AuthManager.shared
         AudioPlayer.shared.configureAudioSession()
+        // Resume the last session's queue, PAUSED — mini player shows where you
+        // left off; nothing streams until you press play.
+        AudioPlayer.shared.restorePlaybackState()
     }
 
     var body: some Scene {

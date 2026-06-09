@@ -1887,6 +1887,13 @@ final class MoodMixGenerator_Mac {
     }
 
     private func analyse(prompt: String) async throws -> MoodAnalysis_Mac {
+        // User-configured custom AI (Pro, opt-in) takes precedence. Gate on the
+        // live Pro entitlement so it stops if Pro lapses; analyze() throws a
+        // clear error if enabled-but-unconfigured or consent not yet granted.
+        if ProEntitlementStore.shared.isPro && CustomAIStore.shared.enabled {
+            let r = try await CustomAIStore.shared.analyze(prompt: prompt)
+            return MoodAnalysis_Mac(tags: r.tags, decade: r.decade, mood: r.mood)
+        }
         #if canImport(FoundationModels)
         if #available(macOS 26, *) {
             return try await FoundationModelsAdapter_Mac.analyse(prompt: prompt)

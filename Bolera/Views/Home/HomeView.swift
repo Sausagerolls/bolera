@@ -718,6 +718,16 @@ final class MoodMixGenerator {
     /// Foundation Models analysis. Wrapped in availability checks so older
     /// OS versions or non-AI devices surface a clear error.
     private func analyse(prompt: String) async throws -> MoodAnalysis {
+        // A user-configured custom AI server (Pro, opt-in) takes precedence.
+        // Gate on the live Pro entitlement (not just the stored toggle) so the
+        // feature stops working if Pro lapses — this is the only choke point the
+        // CarPlay path goes through too. It only runs after explicit consent for
+        // the endpoint; analyze() throws a clear error if enabled-but-unconfigured
+        // or not yet consented.
+        if ProEntitlementStore.shared.isPro && CustomAIStore.shared.enabled {
+            let r = try await CustomAIStore.shared.analyze(prompt: prompt)
+            return MoodAnalysis(tags: r.tags, decade: r.decade, mood: r.mood)
+        }
         #if canImport(FoundationModels)
         if #available(iOS 26, macOS 26, *) {
             return try await FoundationModelsAdapter.analyse(prompt: prompt)

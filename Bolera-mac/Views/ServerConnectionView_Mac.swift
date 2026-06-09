@@ -6,6 +6,8 @@ struct ServerConnectionView_Mac: View {
     @State private var server: String = ""
     @State private var username: String = ""
     @State private var password: String = ""
+    @State private var code: String = ""
+    @State private var show2FA = false
     @State private var loading = false
     @State private var error: String?
     @State private var signInTask: Task<Void, Never>?
@@ -33,6 +35,22 @@ struct ServerConnectionView_Mac: View {
                     SecureField("Password", text: $password)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { signIn() }
+                    if show2FA {
+                        TextField("Authenticator code (2FA) — e.g. 123456", text: $code)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { signIn() }
+                        Text("Enter the 6-digit code from your authenticator app. Works with JellyfinSecurity and TOTP plugins.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Button {
+                        withAnimation { show2FA.toggle(); if !show2FA { code = "" } }
+                    } label: {
+                        Label(show2FA ? "Hide two-factor code" : "My server uses two-factor (2FA)",
+                              systemImage: "lock.shield").font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxWidth: 380)
 
@@ -79,7 +97,8 @@ struct ServerConnectionView_Mac: View {
         error = nil
         signInTask = Task {
             do {
-                try await auth.login(server: url, username: username, password: password)
+                try await auth.login(server: url, username: username, password: password,
+                                     code: show2FA ? code : nil)
             } catch is CancellationError {
                 // user cancelled — message set by cancelSignIn()
             } catch let u as URLError where u.code == .cancelled {

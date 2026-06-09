@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import MediaPlayer
 import Combine
+import Network
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -31,6 +32,12 @@ public final class PlaybackClock: ObservableObject {
 /// sync so lock screen / Control Center / AirPlay / CarPlay all work.
 public final class AudioPlayer: NSObject, ObservableObject {
     public static let shared = AudioPlayer()
+
+    /// True while audio is currently routing to CarPlay. Read synchronously when
+    /// building a stream URL so an optional CarPlay-specific bitrate can apply
+    /// (a lower, reliable rate for driving through patchy signal). Updated on
+    /// every route change + at session setup + on foreground. macOS: always false.
+    public nonisolated(unsafe) static var isCarPlayActive = false
 
     @Published public private(set) var queue: [BaseItem] = []
     @Published public private(set) var currentIndex: Int = 0
@@ -80,6 +87,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private var endObserver: NSObjectProtocol?
     private var endObserverItem: AVPlayerItem?
     private var statusObserver: NSKeyValueObservation?
+    /// Separate observer for the crossfade incoming track during the fade. Kept
+    /// distinct from `statusObserver` so warming the next track doesn't drop
+    /// failure-observation of the still-playing outgoing track.
+    private var crossfadeStatusObserver: NSKeyValueObservation?
     private var rateObserver: NSKeyValueObservation?
 
     private var crossfadeTimer: Timer?
@@ -89,6 +100,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// Whether playback was active when an audio-session interruption began, so
     /// we know to resume (and reactivate the session) when it ends.
     private var interruptedWhilePlaying = false
+    /// True only while playback is paused BY an interruption (call / nav prompt)
+    /// and the user hasn't since touched transport. Lets interruption-ended
+    /// auto-resume without resuming over a pause the user made during the call.
+    private var pausedByInterruption = false
 
     /// Pre-loaded AVURLAssets for upcoming queue items, keyed by track Id.
     /// Kept in memory so a Next press / natural end-of-track can swap to
@@ -139,20 +154,82 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private var reportStartTask: Task<Void, Never>?
     private let startReportDelay: TimeInterval = 2.0
 
-    // Stall recovery. A streamed item whose connection drops sits in
-    // .waitingToPlayAtSpecifiedRate forever — automaticallyWaitsToMinimize-
-    // Stalling never gets fresh data, and the periodic time observer doesn't
-    // fire while stalled, so nothing recovers it (the symptom: audio freezes a
-    // couple seconds in and stays frozen until the user skips). When a stall
-    // begins we arm a timer; if it hasn't recovered we reload the item, which
-    // reopens the stream at the current position.
+    // Stall recovery. A streamed item whose connection drops (dead spot while
+    // driving, cellular handoff, tunnel blip) sits in .waitingToPlayAtSpecified-
+    // Rate forever — a progressive HTTP stream (which we require for the EQ tap)
+    // does NOT self-heal the way HLS does once its connection dies, and the
+    // periodic time observer doesn't fire while stalled. So we drive recovery
+    // ourselves: when a stall begins we schedule a reload; each reload reopens
+    // the stream (downgrading bitrate on a marginal link) and resumes at the
+    // frozen position. Crucially we NEVER permanently give up — we keep retrying
+    // with a capped backoff for as long as the user intends playback, and a
+    // network-restored event (path back / server reachable / app foreground)
+    // recovers instantly instead of waiting for the next backoff tick. The old
+    // code gave up after 3 reloads, which is exactly why a long dead spot left
+    // playback frozen until the user manually skipped.
     private var stallStartedAt: Date?
-    private var stallReloadCount = 0
-    private let stallReloadThreshold: TimeInterval = 6
-    private let maxStallReloads = 3
+    /// Count of recovery reloads for the current stuck stream. Drives the
+    /// backoff interval + adaptive bitrate step-down. Reset to 0 the moment
+    /// playback actually resumes or a fresh (non-recovery) track loads.
+    private var recoveryAttempt = 0
+    /// The scheduled (timed) recovery reload, kept so a network-restored kick
+    /// can cancel the pending backoff wait and recover immediately.
+    private var recoveryWorkItem: DispatchWorkItem?
+    /// Debounce so a timer tick and a network-restored kick (or a flapping path)
+    /// can't fire two reloads back-to-back.
+    private var lastReloadAt: Date = .distantPast
+    /// Bitrate ceiling forced on the CURRENT recovery reload so a marginal link
+    /// can be stepped down (320 → 192 → 128 → 96) until it sustains. nil = use
+    /// the normal metered-path logic. Cleared when playback resumes.
+    private var recoveryBitrateCap: Int?
+    /// The user's playback INTENT, distinct from `isPlaying` (which is briefly
+    /// false during a hard item failure / pause transition). Recovery is gated
+    /// on intent so a transient failure doesn't latch playback off.
+    private var userWantsPlayback = false
     /// Position to seek to once a reloaded item reaches .readyToPlay, so a
     /// stall-recovery reload resumes where it froze instead of from the start.
     private var pendingSeekAfterLoad: Double?
+
+    /// Position the restored (last-session) queue should resume from on the
+    /// FIRST play. The queue is restored paused with no AVPlayer item attached
+    /// (no launch streaming, Plexamp-style); the actual stream opens + seeks here
+    /// only when the user presses play. Consumed by loadCurrent.
+    private var pendingRestorePosition: Double?
+    /// Serializes the (potentially large) queue snapshot writes off the main
+    /// thread so persisting never janks playback.
+    private let persistQueue = DispatchQueue(label: "com.bolera.playqueue.persist", qos: .utility)
+    private static let queueStateURL: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return base.appendingPathComponent("bolera.playqueue.json")
+    }()
+    /// Frozen-playhead watchdog (silent-stall detection in tick): the last
+    /// position we saw advance and when. A dead progressive stream can stay
+    /// .playing with the playhead stuck and never flip to .waiting.
+    private var lastTickTime: Double = 0
+    private var lastAdvanceAt: Date = .distantPast
+
+    // Instant network-restored recovery. Watches the path directly (independent
+    // of ConnectivityStore, which only flips on a failed API request — a pure
+    // streaming stall often leaves it thinking it's still "online"). The moment
+    // the path is usable again we kick a stalled stream rather than waiting out
+    // the backoff. Belt-and-suspenders with the ConnectivityStore.didReconnect
+    // subscription (fires when the server itself answers again) and foreground.
+    #if canImport(UIKit)
+    private let audioNetMonitor = NWPathMonitor()
+    private let audioNetQueue = DispatchQueue(label: "com.bolera.audio.netmonitor")
+    private var lastNetSatisfied = true
+    /// Last seen path cost, so a Wi-Fi↔cellular flip can drop assets warmed
+    /// under the old conditions (a Wi-Fi-warmed full-quality FLAC must not be
+    /// streamed over cellular).
+    private var lastNetExpensive = false
+    private var reconnectCancellable: AnyCancellable?
+    private var bgTask: UIBackgroundTaskIdentifier = .invalid
+    #endif
+
+    /// How far ahead to buffer. A generous forward buffer means short dead spots
+    /// (tunnels, rural gaps) are covered by already-downloaded audio and never
+    /// even register as a stall — the single biggest "seamless" lever for music.
+    private let forwardBufferSeconds: Double = 120
 
     /// Consecutive endless-mix top-ups that returned nothing. A single empty
     /// result is usually a transient network failure (driving through a dead
@@ -185,6 +262,56 @@ public final class AudioPlayer: NSObject, ObservableObject {
                                                selector: #selector(handleMediaReset),
                                                name: AVAudioSession.mediaServicesWereResetNotification,
                                                object: nil)
+        // Recover a stalled stream the instant the network path becomes usable
+        // again (out of a dead spot / tunnel / cellular handoff) and on app
+        // foreground — without waiting for the backoff timer.
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(handleDidBecomeActive),
+                                               name: UIApplication.didBecomeActiveNotification,
+                                               object: nil)
+        audioNetMonitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            let expensive = path.isExpensive || path.isConstrained
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let wasSatisfied = self.lastNetSatisfied
+                self.lastNetSatisfied = satisfied
+                if expensive != self.lastNetExpensive {
+                    self.lastNetExpensive = expensive
+                    // Cost flipped (left Wi-Fi for cellular, or back). Drop assets
+                    // warmed under the old conditions so upcoming tracks reopen at
+                    // the right bitrate — a Wi-Fi-warmed FLAC streamed over
+                    // cellular is exactly what stalled the 4th track silently.
+                    if !self.preloadedAssets.isEmpty {
+                        self.preloadedAssets.removeAll()
+                        DebugLog.write("[AudioPlayer] path expensive=\(expensive) — cleared \(expensive ? "Wi-Fi-warmed" : "cellular-warmed") assets")
+                    }
+                }
+                // Only act when we're actually stalled (recoverNowIfStalled
+                // guards on that), so frequent path updates are cheap no-ops.
+                if satisfied { self.recoverNowIfStalled(wasSatisfied ? "network path changed" : "network restored") }
+            }
+        }
+        audioNetMonitor.start(queue: audioNetQueue)
+        // The server answering a connectivity probe again is the most precise
+        // "resume now" signal for a LAN-only server reachable via a tunnel.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.reconnectCancellable = ConnectivityStore.shared.didReconnect
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] in self?.recoverNowIfStalled("server reconnected") }
+        }
+        #endif
+        // Persist the play queue when the app backgrounds / resigns / quits, so
+        // the next launch can resume (paused) where the user left off.
+        #if canImport(UIKit)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleWillBackground),
+                                               name: UIApplication.didEnterBackgroundNotification, object: nil)
+        #elseif canImport(AppKit)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleWillBackground),
+                                               name: NSApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleWillBackground),
+                                               name: NSApplication.willTerminateNotification, object: nil)
         #endif
     }
 
@@ -192,24 +319,41 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
     public func configureAudioSession() {
         #if canImport(UIKit)
+        let session = AVAudioSession.sharedInstance()
+        // Set the category independently of activation: getting .playback set is
+        // what matters for background audio; if activation fails we don't want it
+        // to also skip the category.
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetoothA2DP])
-            try AVAudioSession.sharedInstance().setActive(true)
+            try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetoothA2DP])
         } catch {
-            print("Audio session error: \(error)")
+            DebugLog.write("[AudioPlayer] setCategory failed: \(error)")
         }
+        do {
+            try session.setActive(true)
+        } catch {
+            // -50 (param error) can hit if we activate too early / while another
+            // app holds the session. Don't leave it dead — retry shortly; the
+            // category is already correct so playback will route once active.
+            DebugLog.write("[AudioPlayer] setActive failed: \(error) — retrying in 0.5s")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                do { try AVAudioSession.sharedInstance().setActive(true) }
+                catch { DebugLog.write("[AudioPlayer] setActive retry failed: \(error)") }
+            }
+        }
+        refreshCarPlayRoute()
         #endif
     }
 
-    /// Re-activate the shared audio session. The system DEACTIVATES it during
-    /// an interruption (Siri, a nav prompt, a notification while driving); if we
-    /// resume playback without reactivating, the player advances — progress bar
-    /// keeps moving — but no audio reaches the output. Reactivating here fixes
-    /// that "playing but silent" state.
-    private func reactivateSession() {
+    /// Update `isCarPlayActive` from the current audio route. Cheap; called on
+    /// route changes, session setup, and foreground so the CarPlay-bitrate
+    /// decision in `playbackStreamURL` always reflects the live route.
+    private func refreshCarPlayRoute() {
         #if canImport(UIKit)
-        do { try AVAudioSession.sharedInstance().setActive(true) }
-        catch { print("[AudioPlayer] session reactivate failed: \(error)") }
+        let carplay = AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .carAudio }
+        if carplay != Self.isCarPlayActive {
+            Self.isCarPlayActive = carplay
+            DebugLog.write("[AudioPlayer] CarPlay route \(carplay ? "connected" : "disconnected")")
+        }
         #endif
     }
 
@@ -332,6 +476,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         originalQueue = []
         currentIndex = 0
         publishWidgetSnapshot()
+        clearPersistedQueue()
     }
 
     // MARK: - Transport
@@ -340,7 +485,14 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
     public func play() {
         guard !queue.isEmpty else { return }
-        if activePlayer.currentItem == nil { loadCurrent(autoplay: true); return }
+        userWantsPlayback = true
+        pausedByInterruption = false   // user took manual control
+        // First play after a cross-launch restore: no stream is attached yet —
+        // open it now and resume at the remembered position.
+        if activePlayer.currentItem == nil {
+            loadCurrent(autoplay: true, resumeAt: pendingRestorePosition)
+            return
+        }
         activePlayer.play()
         isPlaying = true
         updateNowPlaying()
@@ -363,11 +515,18 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
         playerA.pause(); playerB.pause()
         isPlaying = false
+        userWantsPlayback = false
+        pausedByInterruption = false
+        cancelRecovery()
         updateNowPlaying()
         reportProgress(event: "pause", paused: true)
+        persistPlaybackState()   // capture the paused position for next launch
     }
 
     public func stop() {
+        userWantsPlayback = false
+        pausedByInterruption = false
+        cancelRecovery()
         reportStartTask?.cancel()
         if let current = current {
             Task { try? await reportStop(item: current) }
@@ -386,6 +545,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // loadCurrent() resets artwork for the incoming track anyway.
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         publishWidgetSnapshot()
+        persistPlaybackState()
     }
 
     public func next() {
@@ -426,7 +586,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
     }
 
     public func previous() {
-        if currentTime > 3 {
+        // The "restart current track if >3s in" gesture only applies to a track
+        // that's actually playing — on a restored-but-not-yet-played queue the
+        // position is pre-seeded, so a Previous tap should go to the prior track.
+        if activePlayer.currentItem != nil, currentTime > 3 {
             seek(to: 0); return
         }
         if currentIndex > 0 {
@@ -438,6 +601,14 @@ public final class AudioPlayer: NSObject, ObservableObject {
     }
 
     public func seek(to seconds: Double) {
+        // No stream attached yet (restored-but-not-played queue): just remember
+        // where to resume and reflect it in the UI; the real seek happens when
+        // the stream opens on first play.
+        if activePlayer.currentItem == nil {
+            currentTime = max(0, seconds)
+            pendingRestorePosition = currentTime
+            return
+        }
         // Optimistic update so the UI snaps to the target immediately
         // (avoids the slider flicking back to the pre-scrub position while
         // the AVPlayer seek is in flight). Also blank-out periodic ticks
@@ -491,28 +662,41 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
     // MARK: - Loading
 
-    private func loadCurrent(autoplay: Bool, resumeAt: Double? = nil) {
+    private func loadCurrent(autoplay: Bool, resumeAt: Double? = nil, isRecovery: Bool = false) {
         guard let item = current else { return }
         cancelCrossfade()
         pendingSeekAfterLoad = resumeAt
+        pendingRestorePosition = nil   // consumed (or superseded by an explicit load)
+        if autoplay { userWantsPlayback = true }
+        // A fresh (user-initiated) load starts the recovery state machine clean —
+        // cancelRecovery() also ends any in-flight background task so a reload
+        // that's superseded by a natural track change (or a skip) can't leak it.
+        // A recovery reload keeps the attempt counter + stepped-down bitrate so
+        // the backoff and quality ladder continue across reopens.
+        if !isRecovery { cancelRecovery() }
 
         // Reuse the warmed asset when possible — saves the HTTP open +
         // track enumeration round-trip that would otherwise stall the
-        // start of playback by 1–2 seconds.
+        // start of playback by 1–2 seconds. A recovery reload skips the warmed
+        // asset (it may be the dead one) and reopens fresh at a capped bitrate.
         let asset: AVURLAsset
-        if let warmed = consumePreloadedAsset(for: item) {
+        if !isRecovery, let warmed = consumePreloadedAsset(for: item) {
             asset = warmed
         } else {
             let url: URL
             if let local = DownloadManager.shared.localFileURL(for: item.Id) {
                 url = local
             } else if let client = client {
-                url = client.playbackStreamURL(for: item.Id)
+                url = client.playbackStreamURL(for: item.Id, maxBitrateOverride: recoveryBitrateCap)
             } else { return }
-            DebugLog.write("[AudioPlayer] load '\(item.Name)' src=\(url.isFileURL ? "local" : "stream") \(url.absoluteString)")
+            DebugLog.write("[AudioPlayer] load '\(item.Name)' src=\(url.isFileURL ? "local" : "stream") recovery=\(isRecovery) \(url.absoluteString)")
             asset = AVURLAsset(url: url)
         }
         let playerItem = AVPlayerItem(asset: asset)
+        // Buffer well ahead so short network gaps are absorbed silently rather
+        // than stalling. (0 = AVPlayer's conservative default, which let a brief
+        // dead spot empty the buffer and freeze.)
+        playerItem.preferredForwardBufferDuration = forwardBufferSeconds
 
         // Install a fresh AudioProcessor + tap for this item.
         let processor = AudioProcessor()
@@ -548,29 +732,11 @@ public final class AudioPlayer: NSObject, ObservableObject {
         hasScrobbledCurrent = false
         hasUpdatedNowPlayingCurrent = false
 
-        statusObserver = playerItem.observe(\.status, options: [.new]) { [weak self] item, _ in
-            if item.status == .readyToPlay {
-                let d = CMTimeGetSeconds(item.duration)
-                self?.duration = d.isFinite ? d : (self?.duration ?? 0)
-                // Resume at the frozen position after a stall-recovery reload.
-                if let resume = self?.pendingSeekAfterLoad {
-                    self?.pendingSeekAfterLoad = nil
-                    self?.seek(to: resume)
-                }
-                self?.updateNowPlaying()
-            } else if item.status == .failed {
-                // Surface the failure instead of leaving the UI stuck on
-                // "Playing" with no audio (the most common cause is a
-                // Jellyfin server that's unreachable from the device —
-                // e.g. LAN-only server while phone is on cellular).
-                let reason = item.error?.localizedDescription ?? "unknown"
-                print("[AudioPlayer] AVPlayerItem failed: \(reason). URL: \(item.asset.description)")
-                Task { @MainActor in
-                    self?.isPlaying = false
-                    self?.pendingTrackSwap = false
-                }
-            }
-        }
+        // Shared status observer: .readyToPlay sets the real duration (+ resume-
+        // seek after a recovery reload); .failed arms recovery. The crossfade
+        // path uses the SAME observer — it previously ignored .failed entirely,
+        // so a dead crossfaded track stopped silently with no recovery.
+        statusObserver = observeItemStatus(playerItem, resumeSeek: true)
         replaceEndObserver(for: playerItem)
 
         // Wait for audio tap install, THEN swap in the player item + autoplay.
@@ -589,6 +755,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         scheduleStartReport(for: item)
         Task { @MainActor in await LastFmService.shared.updateNowPlaying(item); hasUpdatedNowPlayingCurrent = true }
         maybeExtendQueue()   // endless-mix: top up the queue as it nears the end
+        persistPlaybackState()   // remember the queue + new track for next launch
     }
 
     /// Asynchronously load tracks off-main, then attach the audio mix on main.
@@ -619,14 +786,56 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
     }
 
+    /// Status observer used by BOTH the normal load path and the crossfade path.
+    /// On `.readyToPlay`: set the real duration and, after a recovery reload,
+    /// seek back to the frozen position. On `.failed`: a hard open/stream failure
+    /// (dead spot, cellular handoff) arms recovery instead of silently killing
+    /// the track. KVO fires off-main, so all state mutation hops to main.
+    /// - Parameter resumeSeek: only the loadCurrent path should consume
+    ///   `pendingSeekAfterLoad` (a recovery resume). The crossfade incoming item
+    ///   must NOT seek — it has no pending resume and seeking the fading-in item
+    ///   would jump it.
+    private func observeItemStatus(_ playerItem: AVPlayerItem, resumeSeek: Bool = false) -> NSKeyValueObservation {
+        return playerItem.observe(\.status, options: [.new]) { [weak self] item, _ in
+            guard let self = self else { return }
+            if item.status == .readyToPlay {
+                let d = CMTimeGetSeconds(item.duration)
+                DispatchQueue.main.async {
+                    if d.isFinite { self.duration = d }
+                    if resumeSeek, let resume = self.pendingSeekAfterLoad {
+                        self.pendingSeekAfterLoad = nil
+                        self.seek(to: resume)
+                    }
+                    self.updateNowPlaying()
+                }
+            } else if item.status == .failed {
+                let reason = item.error?.localizedDescription ?? "unknown"
+                DebugLog.write("[AudioPlayer] item failed: \(reason) — scheduling recovery")
+                DispatchQueue.main.async {
+                    self.pendingTrackSwap = false
+                    if self.userWantsPlayback {
+                        if self.stallStartedAt == nil { self.stallStartedAt = Date() }
+                        self.scheduleRecovery()
+                    } else {
+                        self.isPlaying = false
+                    }
+                }
+            }
+        }
+    }
+
     private func replaceEndObserver(for item: AVPlayerItem) {
         if let prev = endObserver { NotificationCenter.default.removeObserver(prev) }
         endObserverItem = item
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
-                                                             object: item, queue: .main) { [weak self] _ in
+                                                             object: item, queue: .main) { [weak self, weak item] _ in
             guard let self = self else { return }
             // If a crossfade already swapped to the next track, ignore the dying item's end.
             if self.crossfadeStartedFor != nil { return }
+            // Only the item currently attached to the active player should advance
+            // the queue — a recovery reload swaps items out, and the stale item's
+            // end notification must not fire a spurious skip mid-recovery.
+            guard !self.pendingTrackSwap, let item = item, self.activePlayer.currentItem === item else { return }
             self.next()
         }
     }
@@ -730,6 +939,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
         let asset = AVURLAsset(url: url)
         let item = AVPlayerItem(asset: asset)
+        item.preferredForwardBufferDuration = forwardBufferSeconds
+        // Watch the incoming track for failure DURING the fade window (it plays
+        // on the inactive player, so handleTimeControl ignores it). Without this
+        // a crossfaded track whose stream dies on a network boundary stops
+        // silently. Uses a SEPARATE observer so the outgoing (still-active) track
+        // keeps its own failure observation; promoted in completeCrossfade.
+        crossfadeStatusObserver = observeItemStatus(item)
 
         let processor = AudioProcessor()
         Task { @MainActor in EQManager.shared.register(processor) }
@@ -790,10 +1006,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
         hasUpdatedNowPlayingCurrent = false
         crossfadeStartedFor = nil
 
+        pendingSeekAfterLoad = nil   // a crossfade starts fresh — never resume-seek
+        // Promote the incoming track's observer to the primary slot (it's now the
+        // active item) and clear the crossfade slot. Re-observe so the single
+        // primary observer cleanly owns the now-active item.
+        crossfadeStatusObserver = nil
         if let item = activePlayer.currentItem {
-            statusObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
-                if item.status == .readyToPlay { self?.duration = CMTimeGetSeconds(item.duration) }
-            }
+            statusObserver = observeItemStatus(item)
             replaceEndObserver(for: item)
         }
         loadArtwork(for: upcoming)
@@ -806,6 +1025,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         crossfadeTimer?.invalidate()
         crossfadeTimer = nil
         crossfadeStartedFor = nil
+        crossfadeStatusObserver = nil
         nextPrepared = false
     }
 
@@ -852,6 +1072,9 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // dead spots, late enough that the current track's own initial buffer
         // gets priority instead of competing with N simultaneous opens.
         guard currentTime >= 1 else { return }
+        // Don't open N upcoming streams while the current one is fighting to
+        // recover — they'd just steal bandwidth from the reload on a bad link.
+        guard stallStartedAt == nil else { return }
         let upcoming = upcomingPlayableIndices(count: preloadDepth)
         let upcomingIds = Set(upcoming.map { queue[$0].Id })
 
@@ -913,6 +1136,29 @@ public final class AudioPlayer: NSObject, ObservableObject {
         guard let item = activePlayer.currentItem else { return }
         let t = CMTimeGetSeconds(item.currentTime())
         currentTime = t.isFinite ? t : 0
+        // Silent-stall watchdog. A progressive stream whose connection dies can
+        // sit at timeControlStatus == .playing with the playhead FROZEN and never
+        // flip to .waiting — so the status-observer recovery never arms. Here we
+        // watch the position itself: if it stops advancing while we're supposedly
+        // playing and the buffer can't keep up, treat it as a stall and recover.
+        if userWantsPlayback, activePlayer.timeControlStatus == .playing, currentTime > 1 {
+            if abs(currentTime - lastTickTime) > 0.05 {
+                lastTickTime = currentTime
+                lastAdvanceAt = Date()
+            } else if stallStartedAt == nil,
+                      Date().timeIntervalSince(lastAdvanceAt) > 3,
+                      !item.isPlaybackLikelyToKeepUp {
+                DebugLog.write("[AudioPlayer] silent underrun — playhead frozen at \(Int(currentTime))s, arming recovery")
+                stallStartedAt = Date()
+                scheduleRecovery()
+            }
+        } else {
+            // Not actively playing yet (buffering, starting, paused) — keep the
+            // baseline fresh so the watchdog never trips on a just-loaded track
+            // (the .distantPast init / fresh-track false positive).
+            lastTickTime = currentTime
+            lastAdvanceAt = Date()
+        }
         // Keep the lock-screen / notification / CarPlay elapsed time in sync.
         // Relying on the system to extrapolate from a single anchor left the
         // first track's scrubber stuck at 0 with no progress marker until a
@@ -964,18 +1210,39 @@ public final class AudioPlayer: NSObject, ObservableObject {
             // .paused means actually paused; .playing and .waiting both mean the
             // user intends playback (a stall isn't a pause).
             self.isPlaying = (status != .paused)
-            // Stall watchdog bookkeeping.
+            // Stall recovery bookkeeping.
             switch status {
             case .waitingToPlayAtSpecifiedRate:
                 if self.stallStartedAt == nil {
                     self.stallStartedAt = Date()
-                    self.armStallWatchdog()
+                    self.scheduleRecovery()
                 }
             case .playing:
+                // Recovered (or never stalled): reset the whole recovery ladder.
                 self.stallStartedAt = nil
-                self.stallReloadCount = 0
+                self.recoveryAttempt = 0
+                self.recoveryBitrateCap = nil
+                self.recoveryWorkItem?.cancel(); self.recoveryWorkItem = nil
+                self.endBackgroundTaskIfNeeded()
             case .paused:
-                self.stallStartedAt = nil
+                if self.userWantsPlayback && !self.pendingTrackSwap {
+                    // We did NOT ask to pause, yet the player went .paused — a dead
+                    // stream that dropped to .paused instead of .waiting (the most
+                    // common silent-stop shape: crossfaded track fails on a network
+                    // boundary). Arm recovery instead of treating it as a pause.
+                    // (A real user pause sets userWantsPlayback=false BEFORE the
+                    // player pauses; a deliberate track swap sets pendingTrackSwap —
+                    // both are excluded, so only a genuine mid-play death lands here.)
+                    if self.stallStartedAt == nil {
+                        DebugLog.write("[AudioPlayer] unexpected pause while playback intended — arming recovery")
+                        self.stallStartedAt = Date()
+                        self.scheduleRecovery()
+                    }
+                } else {
+                    self.stallStartedAt = nil
+                    self.recoveryWorkItem?.cancel(); self.recoveryWorkItem = nil
+                    self.endBackgroundTaskIfNeeded()
+                }
             @unknown default: break
             }
             // On resume, re-read the real position so Now Playing re-syncs after
@@ -988,38 +1255,136 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
     }
 
-    /// Armed when a stall begins. If the item is still stalled after the
-    /// threshold (and we haven't exhausted reload attempts for this track),
-    /// reload it so the stream reopens at the frozen position. Re-arms itself
-    /// after each reload via the stallStartedAt transition in handleTimeControl.
-    private func armStallWatchdog() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + stallReloadThreshold) { [weak self] in
-            guard let self = self else { return }
-            guard let started = self.stallStartedAt else { return }           // recovered
-            guard Date().timeIntervalSince(started) >= self.stallReloadThreshold else { return }
-            guard self.isPlaying else { return }                              // user paused
-            guard self.stallReloadCount < self.maxStallReloads else {
-                DebugLog.write("[AudioPlayer] stall watchdog gave up on '\(self.current?.Name ?? "?")' after \(self.stallReloadCount) reloads")
-                return
-            }
-            self.stallReloadCount += 1
-            DebugLog.write("[AudioPlayer] stall watchdog reloading '\(self.current?.Name ?? "?")' at \(Int(self.currentTime))s (attempt \(self.stallReloadCount))")
-            self.reloadCurrentResumingPosition()
+    // MARK: - Stall recovery state machine
+
+    /// Backoff before the next recovery reload, indexed by attempts so far. The
+    /// first wait lets AVPlayer try to self-heal; later waits grow so we don't
+    /// hammer a dead server — but we NEVER stop retrying while playback is
+    /// intended (the old code gave up after 3 reloads → permanent freeze).
+    private func recoveryDelay(for attempt: Int) -> TimeInterval {
+        switch attempt {
+        case 0: return 5
+        case 1: return 4
+        case 2: return 6
+        case 3: return 10
+        case 4: return 15
+        case 5: return 25
+        default: return 40   // steady cap: keep trying forever, battery-friendly
         }
     }
 
+    /// Bitrate ceiling for a given recovery attempt — step the metered-path
+    /// quality down on a marginal link until it sustains. nil = normal cap.
+    private func bitrateCap(for attempt: Int) -> Int? {
+        switch attempt {
+        case 0, 1, 2: return nil   // first tries at normal cellular quality (≤320)
+        case 3: return 192
+        case 4: return 128
+        default: return 96
+        }
+    }
+
+    /// Schedule the next recovery reload after a backoff; replaces any pending
+    /// one. Called when a stall (or hard item failure) begins.
+    private func scheduleRecovery() {
+        recoveryWorkItem?.cancel()
+        let delay = recoveryDelay(for: recoveryAttempt)
+        let work = DispatchWorkItem { [weak self] in self?.fireRecovery() }
+        recoveryWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// Perform a recovery reload now, if still stalled and the user still wants
+    /// playback. Advances the attempt counter + bitrate ladder. Debounced so a
+    /// backoff tick and a network-restored kick can't double-fire.
+    private func fireRecovery() {
+        guard userWantsPlayback else { endBackgroundTaskIfNeeded(); return }
+        guard stallStartedAt != nil else { return }            // already recovered
+        guard Date().timeIntervalSince(lastReloadAt) > 2 else {
+            // Too soon since the last reopen (e.g. a network-restored kick landed
+            // right after a timed reload). Re-arm the timer instead of dropping
+            // the recovery on the floor, so we still retry shortly. The backoff
+            // delay (≥4s) guarantees the next fire clears this 2s window.
+            scheduleRecovery()
+            return
+        }
+        lastReloadAt = Date()
+        recoveryAttempt += 1
+        recoveryBitrateCap = bitrateCap(for: recoveryAttempt)
+        DebugLog.write("[AudioPlayer] recovery reload '\(current?.Name ?? "?")' at \(Int(currentTime))s attempt=\(recoveryAttempt) cap=\(recoveryBitrateCap.map(String.init) ?? "default")")
+        reloadCurrentResumingPosition()
+    }
+
+    /// Network came back (path usable / server reachable / app foreground):
+    /// recover a stalled stream immediately instead of waiting out the backoff.
+    private func recoverNowIfStalled(_ reason: String) {
+        guard userWantsPlayback, stallStartedAt != nil else { return }
+        DebugLog.write("[AudioPlayer] \(reason) — recovering stalled stream now")
+        recoveryWorkItem?.cancel(); recoveryWorkItem = nil
+        fireRecovery()
+    }
+
+    /// Tear down any pending/active recovery — user paused or stopped.
+    private func cancelRecovery() {
+        stallStartedAt = nil
+        recoveryAttempt = 0
+        recoveryBitrateCap = nil
+        recoveryWorkItem?.cancel(); recoveryWorkItem = nil
+        endBackgroundTaskIfNeeded()
+    }
+
     /// Rebuild the current item from scratch (fresh AVURLAsset → reopens the
-    /// HTTP connection) and resume at the position it stalled on. Used by the
-    /// stall watchdog to recover a dropped stream without skipping the track.
+    /// HTTP connection, at a possibly stepped-down bitrate) and resume at the
+    /// position it stalled on, so a dropped stream recovers without skipping.
+    /// Wrapped in a background task so a backgrounded app (screen off / CarPlay)
+    /// is granted runtime to finish the reopen.
     private func reloadCurrentResumingPosition() {
+        beginBackgroundTaskIfNeeded()
         let resumeAt = currentTime
         stallStartedAt = nil
-        // Drop any warmed asset for the current track so we genuinely reopen
-        // the stream instead of reusing the same (possibly dead) asset.
+        // Drop any warmed asset for the current track so we genuinely reopen the
+        // stream instead of reusing the same (possibly dead) asset.
         if let id = current?.Id { preloadedAssets.removeValue(forKey: id) }
-        reactivateSession()
-        loadCurrent(autoplay: true, resumeAt: resumeAt)
+        // Full reconfigure (category + active), not just setActive — if the
+        // session was left dead (e.g. the launch -50, or a media reset), a bare
+        // reactivate reloads audio into a silent session. configureAudioSession
+        // re-asserts the .playback category too.
+        configureAudioSession()
+        loadCurrent(autoplay: true, resumeAt: resumeAt, isRecovery: true)
     }
+
+    #if canImport(UIKit)
+    @objc private func handleDidBecomeActive() {
+        refreshCarPlayRoute()
+        recoverNowIfStalled("app foregrounded")
+        // A hard failure can land while the app is suspended (its status-observer
+        // recovery may never have fired), leaving a failed item with no armed
+        // recovery. Catch that on resume so reopening the app always unsticks it.
+        if userWantsPlayback, stallStartedAt == nil,
+           activePlayer.currentItem?.status == .failed {
+            DebugLog.write("[AudioPlayer] foreground: found failed item — scheduling recovery")
+            stallStartedAt = Date()
+            scheduleRecovery()
+        }
+    }
+    private func beginBackgroundTaskIfNeeded() {
+        guard bgTask == .invalid else { return }
+        // The expiration handler is invoked by UIKit on an arbitrary thread —
+        // hop to main so all bgTask mutations stay single-threaded.
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "bolera.stallRecovery") { [weak self] in
+            DispatchQueue.main.async { self?.endBackgroundTaskIfNeeded() }
+        }
+    }
+    private func endBackgroundTaskIfNeeded() {
+        guard bgTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(bgTask)
+        bgTask = .invalid
+    }
+    #else
+    @objc private func handleDidBecomeActive() {}
+    private func beginBackgroundTaskIfNeeded() {}
+    private func endBackgroundTaskIfNeeded() {}
+    #endif
 
     #if canImport(UIKit)
     @objc private func handleInterruption(_ note: Notification) {
@@ -1029,24 +1394,31 @@ public final class AudioPlayer: NSObject, ObservableObject {
         switch type {
         case .began:
             interruptedWhilePlaying = isPlaying
-            print("[AudioPlayer] interruption began (wasPlaying=\(isPlaying))")
-            pause()
+            DebugLog.write("[AudioPlayer] interruption began (wasPlaying=\(isPlaying))")
+            pause()                                  // clears pausedByInterruption…
+            pausedByInterruption = interruptedWhilePlaying   // …then mark WE paused it
         case .ended:
-            // The system deactivated our session during the interruption.
-            // Reactivate BEFORE resuming — otherwise the player advances
-            // (progress bar moves) but stays silent. Reactivate even when we
-            // don't auto-resume so the next manual play has audio.
-            reactivateSession()
+            // The system deactivated our session during the interruption. Full
+            // reconfigure BEFORE resuming — otherwise the player advances
+            // (progress bar moves) but stays silent.
+            configureAudioSession()
             let opts = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
                 .map { AVAudioSession.InterruptionOptions(rawValue: $0) } ?? []
-            print("[AudioPlayer] interruption ended (shouldResume=\(opts.contains(.shouldResume)), wasPlaying=\(interruptedWhilePlaying))")
-            if interruptedWhilePlaying && opts.contains(.shouldResume) { play() }
+            DebugLog.write("[AudioPlayer] interruption ended (shouldResume=\(opts.contains(.shouldResume)), pausedByInterruption=\(pausedByInterruption))")
+            // Resume only if WE paused it for the interruption and the user hasn't
+            // manually paused/played during the call — even WITHOUT .shouldResume,
+            // which iOS often omits (that omission used to latch music off after a
+            // nav prompt). A manual pause during the call clears the flag, so we
+            // honour it and stay paused.
+            if pausedByInterruption { play() }
             interruptedWhilePlaying = false
+            pausedByInterruption = false
         @unknown default: break
         }
     }
 
     @objc private func handleRouteChange(_ note: Notification) {
+        refreshCarPlayRoute()   // keep the CarPlay-bitrate flag current on any route change
         guard let info = note.userInfo,
               let reasonRaw = info[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonRaw) else { return }
@@ -1055,13 +1427,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
             // Output device (CarPlay / Bluetooth / headphones) went away —
             // pause rather than blast audio out the phone speaker. Quiescing
             // the render thread here also narrows the tap-teardown window.
-            print("[AudioPlayer] route change: oldDeviceUnavailable → pause")
+            DebugLog.write("[AudioPlayer] route change: oldDeviceUnavailable → pause")
             pause()
         default:
             // .newDeviceAvailable / .categoryChange / .override /
             // .routeConfigurationChange — keep playing; the engine reconfigures
             // for the new route itself.
-            print("[AudioPlayer] route change: reason \(reason.rawValue) (keep playing)")
+            DebugLog.write("[AudioPlayer] route change: reason \(reason.rawValue) (keep playing)")
             break
         }
     }
@@ -1071,7 +1443,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// session and rebuild the current item so we don't sit "playing" against a
     /// dead engine — silent, with the progress bar still ticking.
     @objc private func handleMediaReset(_ note: Notification) {
-        print("[AudioPlayer] media services were reset — reconfiguring + reloading")
+        DebugLog.write("[AudioPlayer] media services were reset — reconfiguring + reloading")
         configureAudioSession()
         preloadedAssets.removeAll()
         let resume = isPlaying
@@ -1250,4 +1622,75 @@ public final class AudioPlayer: NSObject, ObservableObject {
     public var activeAudioProcessor: AudioProcessor? {
         activeIsA ? processorA : processorB
     }
+
+    // MARK: - Queue persistence (resume across launches)
+
+    private struct QueueSnapshot: Codable {
+        let queue: [BaseItem]
+        let originalQueue: [BaseItem]
+        let currentIndex: Int
+        let position: Double
+        let shuffle: Bool
+        let repeatMode: Int
+    }
+
+    /// Persist the queue locally so the next launch can resume PAUSED where the
+    /// user left off. Captured on main; written off-main unless `sync` forces it
+    /// inline so a background/terminate save flushes before suspension/quit.
+    private func persistPlaybackState(sync: Bool = false) {
+        guard !queue.isEmpty, queue.indices.contains(currentIndex) else {
+            clearPersistedQueue(); return
+        }
+        let snap = QueueSnapshot(queue: queue, originalQueue: originalQueue,
+                                 currentIndex: currentIndex,
+                                 position: currentTime.isFinite ? currentTime : 0,
+                                 shuffle: shuffle, repeatMode: repeatMode.rawValue)
+        let write = {
+            guard let data = try? JSONEncoder().encode(snap) else { return }
+            try? data.write(to: Self.queueStateURL, options: .atomic)
+        }
+        if sync { persistQueue.sync { write() } } else { persistQueue.async { write() } }
+    }
+
+    public func clearPersistedQueue() {
+        persistQueue.async { try? FileManager.default.removeItem(at: Self.queueStateURL) }
+    }
+
+    private func readLocalSnapshot() -> QueueSnapshot? {
+        guard let data = try? Data(contentsOf: Self.queueStateURL) else { return nil }
+        return try? JSONDecoder().decode(QueueSnapshot.self, from: data)
+    }
+
+    /// Restore the saved queue PAUSED — mini player visible, no stream opened
+    /// until the user presses play (the stream + resume-seek happen on the first
+    /// play). No-op if already playing, signed out, or nothing saved.
+    @objc public func restorePlaybackState() {
+        guard queue.isEmpty, !userWantsPlayback, AuthManager.shared.isAuthenticated,
+              let snap = readLocalSnapshot() else { return }
+        applyRestore(queue: snap.queue, originalQueue: snap.originalQueue, index: snap.currentIndex,
+                     position: snap.position, shuffle: snap.shuffle, repeatMode: snap.repeatMode)
+    }
+
+    /// Set up the restored queue PAUSED with no AVPlayer item attached — the
+    /// stream opens (and seeks to `position`) only on the first play.
+    private func applyRestore(queue q: [BaseItem], originalQueue oq: [BaseItem],
+                              index: Int, position: Double, shuffle s: Bool, repeatMode r: Int) {
+        guard !q.isEmpty else { return }
+        originalQueue = oq.isEmpty ? q : oq
+        queue = q
+        currentIndex = min(max(0, index), q.count - 1)
+        shuffle = s
+        repeatMode = RepeatMode(rawValue: r) ?? .off
+        guard let cur = current else { return }
+        duration = cur.durationSeconds
+        let pos = max(0, min(position, duration > 0 ? duration : position))
+        currentTime = pos
+        pendingRestorePosition = pos
+        isPlaying = false
+        loadArtwork(for: cur)        // show the cover without opening the stream
+        updateNowPlaying()
+        DebugLog.write("[AudioPlayer] restored queue (\(q.count) tracks) idx=\(currentIndex) at \(Int(pos))s — paused")
+    }
+
+    @objc private func handleWillBackground() { persistPlaybackState(sync: true) }
 }

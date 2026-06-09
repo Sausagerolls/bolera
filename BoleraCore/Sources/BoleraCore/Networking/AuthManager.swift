@@ -67,9 +67,12 @@ public final class AuthManager: ObservableObject {
         return "MediaBrowser " + parts.joined(separator: ", ")
     }
 
-    public func login(server: URL, username: String, password: String) async throws {
+    /// `code` is an optional 2FA one-time code (appended to the password for
+    /// TOTP plugins that support native clients that way). Leave empty for
+    /// app-password / device-pairing plugins.
+    public func login(server: URL, username: String, password: String, code: String? = nil) async throws {
         let client = JellyfinClient(baseURL: server, auth: self)
-        let response = try await client.authenticate(username: username, password: password)
+        let response = try await client.authenticate(username: username, password: password, code: code)
         await MainActor.run {
             self.serverURL = server
             self.accessToken = response.AccessToken
@@ -85,6 +88,7 @@ public final class AuthManager: ObservableObject {
 
     public func logout() {
         AudioPlayer.shared.stop()
+        AudioPlayer.shared.clearPersistedQueue()   // queue is server-scoped
         Keychain.delete("server")
         Keychain.delete("token")
         Keychain.delete("userId")

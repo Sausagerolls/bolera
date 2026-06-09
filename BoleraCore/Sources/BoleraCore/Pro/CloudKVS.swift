@@ -31,6 +31,16 @@ public enum CloudKVS {
         return NSUbiquitousKeyValueStore.default.dictionary(forKey: key) as? [String: String]
     }
 
+    public static func data(forKey key: String) -> Data? {
+        guard isAvailable else { return nil }
+        return NSUbiquitousKeyValueStore.default.data(forKey: key)
+    }
+
+    public static func removeObject(forKey key: String) {
+        guard isAvailable else { return }
+        NSUbiquitousKeyValueStore.default.removeObject(forKey: key)
+    }
+
     public static func set(_ value: Any?, forKey key: String) {
         guard isAvailable else { return }
         NSUbiquitousKeyValueStore.default.set(value, forKey: key)

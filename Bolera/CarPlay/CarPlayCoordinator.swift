@@ -41,11 +41,6 @@ final class CarPlayCoordinator {
     /// the tab populates instantly from cache before the server refresh lands.
     private let recentsStore = LibraryStore()
 
-    /// Local optimistic overrides of the favourite state for the Now Playing
-    /// heart button, keyed by track Id — flips the glyph instantly on tap before
-    /// the server round-trip, and falls back to the item's own `UserData` when
-    /// the user hasn't toggled it this session.
-    private var favouriteOverrides: [String: Bool] = [:]
 
     init(interfaceController: CPInterfaceController) {
         self.interfaceController = interfaceController
@@ -97,13 +92,35 @@ final class CarPlayCoordinator {
         AudioPlayer.shared.$currentIndex
             .combineLatest(AudioPlayer.shared.$queue)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _, _ in self?.refreshNowPlayingButtons() }
+            .sink { [weak self] _, _ in
+                self?.refreshNowPlayingButtons()
+                self?.reconcileFavourite()
+            }
+            .store(in: &cancellables)
+        // Keep the heart glyph in sync as the offline-queue state changes
+        // (optimistic toggle, or a flush confirming/clearing a pending change).
+        FavoritesSync.shared.$state
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshNowPlayingButtons() }
             .store(in: &cancellables)
         refreshNowPlayingButtons()
+        reconcileFavourite()
+    }
+
+    /// Refetch the current track from the server and reconcile the heart to its
+    /// REAL state via the offline-tolerant queue (won't clobber a pending tap).
+    private func reconcileFavourite() {
+        guard let item = AudioPlayer.shared.current, let client = client else { return }
+        Task {
+            guard let fresh = try? await client.item(item.Id) else { return }
+            await MainActor.run {
+                FavoritesSync.shared.reconcile(id: item.Id, serverFavorite: fresh.UserData?.IsFavorite ?? false)
+            }
+        }
     }
 
     private func isFavourited(_ item: BaseItem) -> Bool {
-        favouriteOverrides[item.Id] ?? (item.UserData?.IsFavorite ?? false)
+        FavoritesSync.shared.isFavorite(item)
     }
 
     /// SF Symbol sized for a CarPlay Now Playing button (rendered as a template
@@ -132,17 +149,9 @@ final class CarPlayCoordinator {
     /// optimistically, then persists to Jellyfin — reverting if the call fails.
     private func toggleFavouriteCurrent() {
         guard let item = AudioPlayer.shared.current, let client = client else { return }
-        let newValue = !isFavourited(item)
-        favouriteOverrides[item.Id] = newValue
-        refreshNowPlayingButtons()
-        Task {
-            do {
-                try await client.setFavorite(item.Id, favorite: newValue)
-            } catch {
-                self.favouriteOverrides[item.Id] = !newValue
-                self.refreshNowPlayingButtons()
-            }
-        }
+        // Offline-tolerant: optimistic, persisted, retried on reconnect. The
+        // $state observer above refreshes the glyph.
+        FavoritesSync.shared.setFavorite(item.Id, favorite: !isFavourited(item), client: client)
     }
 
     /// Start an instant-mix "radio" seeded by the current track and play it.

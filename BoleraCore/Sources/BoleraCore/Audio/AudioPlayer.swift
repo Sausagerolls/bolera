@@ -91,10 +91,20 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// distinct from `statusObserver` so warming the next track doesn't drop
     /// failure-observation of the still-playing outgoing track.
     private var crossfadeStatusObserver: NSKeyValueObservation?
+    /// KVO on a freshly-loaded metered stream's buffer, holding back the first
+    /// play() until enough is buffered to survive a transcode's cold ramp (see
+    /// `startBufferSeconds`). Torn down once playback starts or the item changes.
+    private var startGateObserver: NSKeyValueObservation?
+    private var startGateDeadline: DispatchWorkItem?
     private var rateObserver: NSKeyValueObservation?
 
     private var crossfadeTimer: Timer?
     private var crossfadeStartedFor: BaseItem?
+    /// True once the DISPLAYED now-playing has flipped to the incoming track —
+    /// done at the crossfade MIDPOINT (when the incoming becomes the louder
+    /// track), not at fade start (too early) or fade end (lingers past the old
+    /// track's finish). While set, tick() reads the incoming (inactive) player.
+    private var crossfadeShowingIncoming = false
     private var nextPrepared: Bool = false
 
     /// Whether playback was active when an audio-session interruption began, so
@@ -230,6 +240,27 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// (tunnels, rural gaps) are covered by already-downloaded audio and never
     /// even register as a stall — the single biggest "seamless" lever for music.
     private let forwardBufferSeconds: Double = 120
+    /// Smaller forward buffer for the INCOMING crossfade track. During the fade
+    /// two streams play at once; if the incoming one also tries to grab the full
+    /// 120s it spikes concurrent connections (esp. over HTTP/3/QUIC to Cloudflare)
+    /// and the overlap data-stalls a few seconds into the new track. A modest
+    /// buffer covers the fade + margin; `completeCrossfade` restores the full
+    /// buffer once it's the sole active stream.
+    private let crossfadeForwardBufferSeconds: Double = 30
+    /// Minimum audio (seconds) buffered ahead before we START a fresh METERED
+    /// stream. Jellyfin's progressive transcode (`universal` endpoint, used for
+    /// any source above the cellular bitrate ceiling) has a cold ffmpeg ramp:
+    /// AVPlayer's own keep-up heuristic sees the fast header bytes, starts, then
+    /// underruns a few seconds in when the throttled transcode can't keep up —
+    /// the "played a few seconds, stalled, waited, then normal" drive hiccup.
+    /// Holding the first play() until a real buffer exists turns that into one
+    /// slightly-longer initial wait, then smooth playback. Direct streams (LAN /
+    /// local file) skip the gate — they fill instantly and never cold-ramp.
+    private let startBufferSeconds: Double = 12
+    /// Hard cap on the start-buffer wait so a slow link can't hang playback
+    /// forever — past this we play with whatever's buffered (recovery handles
+    /// the rest, same as before this gate existed).
+    private let startBufferTimeout: TimeInterval = 12
 
     /// Consecutive endless-mix top-ups that returned nothing. A single empty
     /// result is usually a transient network failure (driving through a dead
@@ -500,23 +531,26 @@ public final class AudioPlayer: NSObject, ObservableObject {
     }
 
     public func pause() {
-        // If a crossfade is mid-flight, the incoming track is playing on the
-        // inactive player too — pausing only the active one left it audible.
-        // Cancel the fade and snap back to the track shown in the player so a
-        // pause actually silences everything. Check crossfadeStartedFor too:
-        // it's set before the timer (during the incoming track's async asset
-        // load), so a pause in that window would otherwise miss this branch.
+        // If a crossfade is mid-flight, both tracks are audible. Pause onto the
+        // track the user currently SEES: if the display already flipped to the
+        // incoming (past the midpoint), finalize the fade onto it; otherwise snap
+        // back to the still-shown outgoing track. Either way everything silences.
         if crossfadeTimer != nil || crossfadeStartedFor != nil {
-            cancelCrossfade()
-            inactivePlayer.pause()
-            inactivePlayer.replaceCurrentItem(with: nil)
-            inactivePlayer.volume = 0
-            activePlayer.volume = 1.0
+            if crossfadeShowingIncoming, let inc = current {
+                completeCrossfade(to: inc, nextIndex: currentIndex)
+            } else {
+                cancelCrossfade()
+                inactivePlayer.pause()
+                inactivePlayer.replaceCurrentItem(with: nil)
+                inactivePlayer.volume = 0
+                activePlayer.volume = 1.0
+            }
         }
         playerA.pause(); playerB.pause()
         isPlaying = false
         userWantsPlayback = false
         pausedByInterruption = false
+        cancelStartGate()
         cancelRecovery()
         updateNowPlaying()
         reportProgress(event: "pause", paused: true)
@@ -723,6 +757,8 @@ public final class AudioPlayer: NSObject, ObservableObject {
         activePlayer.volume = 1.0
         nextPrepared = false
         crossfadeStartedFor = nil
+        crossfadeShowingIncoming = false
+        cancelStartGate()   // supersede any pending start-buffer gate from a prior load
 
         pendingTrackSwap = true
         currentTime = 0
@@ -746,8 +782,23 @@ public final class AudioPlayer: NSObject, ObservableObject {
             self.pendingTrackSwap = false
             self.currentTime = 0
             if autoplay {
-                self.activePlayer.play()
-                self.isPlaying = true
+                if resumeAt != nil {
+                    // Recovery/resume: do NOT play from 0 here — the readyToPlay
+                    // handler seeks to the resume point first and starts playback
+                    // only after, so we never audibly play the start of the track
+                    // before jumping back (the "flick to the start" glitch).
+                    self.isPlaying = true   // optimistic UI; real play() after the seek
+                } else if !asset.url.isFileURL && ConnectivityStore.pathIsExpensive {
+                    // Metered stream (likely a cold progressive transcode): wait
+                    // for a real forward buffer before the first play() so it
+                    // doesn't start then immediately underrun. UI shows buffering.
+                    self.isPlaying = true
+                    self.isBuffering = true
+                    self.playWhenBuffered(playerItem)
+                } else {
+                    self.activePlayer.play()
+                    self.isPlaying = true
+                }
             }
         }
         loadArtwork(for: item)
@@ -786,6 +837,63 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
     }
 
+    /// Hold back the first play() on a fresh metered stream until `startBufferSeconds`
+    /// of audio is buffered ahead (or `isPlaybackLikelyToKeepUp` + the deadline),
+    /// then start. Prevents the cold-transcode "play a few seconds then stall".
+    private func playWhenBuffered(_ item: AVPlayerItem) {
+        cancelStartGate()
+
+        let start: () -> Void = { [weak self, weak item] in
+            guard let self = self, let item = item else { return }
+            // Only start if this is still the active item and the user still wants
+            // playback (a skip / pause / new load supersedes the gate).
+            guard self.userWantsPlayback, self.activePlayer.currentItem === item else {
+                self.cancelStartGate(); return
+            }
+            self.cancelStartGate()
+            self.activePlayer.play()
+            self.isPlaying = true
+            self.isBuffering = false
+            // Reset the stall watchdog baseline so the just-started track isn't
+            // flagged as frozen on its first ticks.
+            self.lastTickTime = 0
+            self.lastAdvanceAt = Date()
+        }
+
+        let bufferedAhead: (AVPlayerItem) -> Double = { item in
+            let head = CMTimeGetSeconds(item.currentTime())
+            guard let r = item.loadedTimeRanges.first?.timeRangeValue else { return 0 }
+            let end = CMTimeGetSeconds(r.start) + CMTimeGetSeconds(r.duration)
+            let ahead = end - head
+            return ahead.isFinite ? max(0, ahead) : 0
+        }
+
+        // Buffer-watch: start as soon as enough is buffered ahead.
+        startGateObserver = item.observe(\.loadedTimeRanges, options: [.new]) { [weak self] obsItem, _ in
+            guard let self = self else { return }
+            if bufferedAhead(obsItem) >= self.startBufferSeconds {
+                DispatchQueue.main.async { start() }
+            }
+        }
+
+        // Safety deadline: never wait longer than the timeout — start with
+        // whatever's there (recovery handles a genuinely dead link as before).
+        let deadline = DispatchWorkItem { start() }
+        startGateDeadline = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + startBufferTimeout, execute: deadline)
+    }
+
+    private func cancelStartGate() {
+        startGateObserver?.invalidate()
+        startGateObserver = nil
+        startGateDeadline?.cancel()
+        startGateDeadline = nil
+    }
+
+    /// True while we're deliberately holding playback to build the start buffer.
+    /// Recovery must stand down here — the player is paused ON PURPOSE, not stalled.
+    private var startGateActive: Bool { startGateObserver != nil || startGateDeadline != nil }
+
     /// Status observer used by BOTH the normal load path and the crossfade path.
     /// On `.readyToPlay`: set the real duration and, after a recovery reload,
     /// seek back to the frozen position. On `.failed`: a hard open/stream failure
@@ -795,18 +903,39 @@ public final class AudioPlayer: NSObject, ObservableObject {
     ///   `pendingSeekAfterLoad` (a recovery resume). The crossfade incoming item
     ///   must NOT seek — it has no pending resume and seeking the fading-in item
     ///   would jump it.
-    private func observeItemStatus(_ playerItem: AVPlayerItem, resumeSeek: Bool = false) -> NSKeyValueObservation {
+    private func observeItemStatus(_ playerItem: AVPlayerItem, resumeSeek: Bool = false,
+                                   setsDuration: Bool = true) -> NSKeyValueObservation {
         return playerItem.observe(\.status, options: [.new]) { [weak self] item, _ in
             guard let self = self else { return }
             if item.status == .readyToPlay {
                 let d = CMTimeGetSeconds(item.duration)
                 DispatchQueue.main.async {
-                    if d.isFinite { self.duration = d }
+                    // The crossfade incoming item readies DURING the fade, while
+                    // the display still shows the OUTGOING track — so it must not
+                    // overwrite the displayed `duration` (that made the old track's
+                    // total jump to the new one's near the end). The midpoint flip
+                    // sets duration from the incoming's metadata instead.
+                    if setsDuration, d.isFinite { self.duration = d }
                     if resumeSeek, let resume = self.pendingSeekAfterLoad {
                         self.pendingSeekAfterLoad = nil
-                        self.seek(to: resume)
+                        // Seek to the resume point BEFORE starting playback so a
+                        // recovery reload never plays from 0:00 and flicks back.
+                        self.currentTime = resume
+                        self.ignoreTicksUntil = Date().addingTimeInterval(0.3)
+                        let t = CMTime(seconds: resume, preferredTimescale: 1000)
+                        self.activePlayer.seek(to: t) { [weak self] _ in
+                            guard let self = self else { return }
+                            self.currentTime = resume
+                            if self.userWantsPlayback {
+                                self.activePlayer.play()
+                                self.isPlaying = true
+                            }
+                            self.updateNowPlaying()
+                            self.reportProgress(event: "timeupdate", paused: !self.isPlaying)
+                        }
+                    } else {
+                        self.updateNowPlaying()
                     }
-                    self.updateNowPlaying()
                 }
             } else if item.status == .failed {
                 let reason = item.error?.localizedDescription ?? "unknown"
@@ -903,6 +1032,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
     // MARK: - Crossfade
 
     private func maybeStartCrossfade() {
+        guard crossfadeTimer == nil else { return }   // a fade is already running
         guard crossfadeDuration > 0.5 else { return }
         guard duration > crossfadeDuration + 1 else { return }
         guard let cur = current, crossfadeStartedFor?.Id != cur.Id else { return }
@@ -939,13 +1069,16 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
         let asset = AVURLAsset(url: url)
         let item = AVPlayerItem(asset: asset)
-        item.preferredForwardBufferDuration = forwardBufferSeconds
+        // Modest buffer during the overlap so the incoming stream doesn't spike
+        // concurrent connections and data-stall the fade; restored to the full
+        // buffer in completeCrossfade once it's the only active stream.
+        item.preferredForwardBufferDuration = crossfadeForwardBufferSeconds
         // Watch the incoming track for failure DURING the fade window (it plays
         // on the inactive player, so handleTimeControl ignores it). Without this
         // a crossfaded track whose stream dies on a network boundary stops
         // silently. Uses a SEPARATE observer so the outgoing (still-active) track
         // keeps its own failure observation; promoted in completeCrossfade.
-        crossfadeStatusObserver = observeItemStatus(item)
+        crossfadeStatusObserver = observeItemStatus(item, setsDuration: false)
 
         let processor = AudioProcessor()
         Task { @MainActor in EQManager.shared.register(processor) }
@@ -982,6 +1115,9 @@ public final class AudioPlayer: NSObject, ObservableObject {
             let t = min(1.0, elapsed / total)
             fadingOut.volume = Float(1.0 - t)
             fadingIn.volume = Float(t)
+            // Midpoint: the incoming track is now the louder one — flip the
+            // displayed now-playing to it (art/info/time), the natural changeover.
+            if t >= 0.5 { self.flipDisplayToIncoming(upcoming, index: nextIndex) }
             if t >= 1.0 {
                 timer.invalidate()
                 self.completeCrossfade(to: upcoming, nextIndex: nextIndex)
@@ -989,42 +1125,62 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
     }
 
+    /// Flip the DISPLAYED now-playing to the incoming track mid-fade. Audio keeps
+    /// crossfading on both players; `tick()` reads the incoming (inactive) player
+    /// while `crossfadeShowingIncoming`, so the shown time is the new track's.
+    private func flipDisplayToIncoming(_ item: BaseItem, index: Int) {
+        guard !crossfadeShowingIncoming else { return }
+        crossfadeShowingIncoming = true
+        currentIndex = index
+        let elapsed = CMTimeGetSeconds(inactivePlayer.currentItem?.currentTime() ?? .zero)
+        currentTime = elapsed.isFinite ? max(0, elapsed) : 0
+        duration = item.durationSeconds
+        artwork = nil
+        trackStartedAt = Date()
+        hasScrobbledCurrent = false
+        hasUpdatedNowPlayingCurrent = false
+        loadArtwork(for: item)
+        updateNowPlaying()
+        scheduleStartReport(for: item)
+        Task { @MainActor in await LastFmService.shared.updateNowPlaying(item) }
+    }
+
     private func completeCrossfade(to upcoming: BaseItem, nextIndex: Int) {
-        crossfadeTimer = nil
-        // Swap active/inactive roles.
+        crossfadeTimer?.invalidate(); crossfadeTimer = nil
+        // Make sure the display flipped (covers a very short fade that jumped the
+        // timer past the midpoint). Reads the incoming on the inactive player.
+        flipDisplayToIncoming(upcoming, index: nextIndex)
+        // Swap roles: drop the outgoing item and make the incoming the active player.
         detachMix(from: activePlayer)   // finalize the outgoing item's tap before releasing it
         activePlayer.pause()
         activePlayer.replaceCurrentItem(with: nil)
         activeIsA.toggle()
         activePlayer.volume = 1.0
-        currentIndex = nextIndex
-        currentTime = 0
-        duration = upcoming.durationSeconds
-        artwork = nil
-        trackStartedAt = Date()
-        hasScrobbledCurrent = false
-        hasUpdatedNowPlayingCurrent = false
+        // Re-sync the counter to the incoming track's real elapsed (now active).
+        let incomingElapsed = CMTimeGetSeconds(activePlayer.currentItem?.currentTime() ?? .zero)
+        currentTime = incomingElapsed.isFinite ? max(0, incomingElapsed) : 0
         crossfadeStartedFor = nil
+        crossfadeShowingIncoming = false
 
         pendingSeekAfterLoad = nil   // a crossfade starts fresh — never resume-seek
         // Promote the incoming track's observer to the primary slot (it's now the
-        // active item) and clear the crossfade slot. Re-observe so the single
-        // primary observer cleanly owns the now-active item.
+        // active item) and clear the crossfade slot.
         crossfadeStatusObserver = nil
         if let item = activePlayer.currentItem {
+            // Now the sole active stream — restore the full forward buffer for
+            // dead-spot resilience (it ran with the modest crossfade buffer).
+            item.preferredForwardBufferDuration = forwardBufferSeconds
             statusObserver = observeItemStatus(item)
             replaceEndObserver(for: item)
         }
-        loadArtwork(for: upcoming)
         updateNowPlaying()
-        scheduleStartReport(for: upcoming)
-        Task { @MainActor in await LastFmService.shared.updateNowPlaying(upcoming) }
     }
 
     private func cancelCrossfade() {
         crossfadeTimer?.invalidate()
         crossfadeTimer = nil
         crossfadeStartedFor = nil
+        crossfadeShowingIncoming = false
         crossfadeStatusObserver = nil
         nextPrepared = false
     }
@@ -1075,6 +1231,9 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // Don't open N upcoming streams while the current one is fighting to
         // recover — they'd just steal bandwidth from the reload on a bad link.
         guard stallStartedAt == nil else { return }
+        // Nor during a crossfade: two streams already overlap, and adding N more
+        // concurrent opens spikes connections and data-stalls the incoming track.
+        guard crossfadeStartedFor == nil, crossfadeTimer == nil else { return }
         let upcoming = upcomingPlayableIndices(count: preloadDepth)
         let upcomingIds = Set(upcoming.map { queue[$0].Id })
 
@@ -1098,6 +1257,19 @@ public final class AudioPlayer: NSObject, ObservableObject {
             // Kick off async key load so playable/tracks/duration land
             // before the user actually advances.
             asset.loadValuesAsynchronously(forKeys: ["playable", "tracks", "duration"]) { }
+            // Also prefetch the artwork (same 600px the player uses) into the
+            // persistent ImageCache so the cover is ready BEFORE the track plays
+            // — otherwise driving into a dead spot leaves the next track's art
+            // blank. Fires once per track (gated by the warmed-asset check above).
+            if let client = client {
+                let headers = ["Authorization": authManager?.authHeader() ?? ""]
+                let artId = item.artworkItemId, tag = item.artworkTag
+                Task.detached {
+                    _ = await ImageCache.shared.loadArtwork(itemId: artId, tag: tag,
+                                                            client: client, maxWidth: 600,
+                                                            headers: headers)
+                }
+            }
         }
     }
 
@@ -1133,7 +1305,12 @@ public final class AudioPlayer: NSObject, ObservableObject {
         guard !pendingTrackSwap else { return }
         // Also skip during the post-programmatic-seek blackout window.
         guard Date() >= ignoreTicksUntil else { return }
-        guard let item = activePlayer.currentItem else { return }
+        // After the crossfade midpoint the display shows the incoming track,
+        // which is still on the inactive player until the fade completes — read
+        // its clock so the shown time matches the displayed (new) track.
+        let showingIncoming = crossfadeShowingIncoming && crossfadeStartedFor != nil
+        let sourcePlayer = showingIncoming ? inactivePlayer : activePlayer
+        guard let item = sourcePlayer.currentItem else { return }
         let t = CMTimeGetSeconds(item.currentTime())
         currentTime = t.isFinite ? t : 0
         // Silent-stall watchdog. A progressive stream whose connection dies can
@@ -1141,7 +1318,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // flip to .waiting — so the status-observer recovery never arms. Here we
         // watch the position itself: if it stops advancing while we're supposedly
         // playing and the buffer can't keep up, treat it as a stall and recover.
-        if userWantsPlayback, activePlayer.timeControlStatus == .playing, currentTime > 1 {
+        if userWantsPlayback, !showingIncoming, activePlayer.timeControlStatus == .playing, currentTime > 1 {
             if abs(currentTime - lastTickTime) > 0.05 {
                 lastTickTime = currentTime
                 lastAdvanceAt = Date()
@@ -1200,6 +1377,15 @@ public final class AudioPlayer: NSObject, ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, self.activeIsA == isA else { return }
             let status = player.timeControlStatus
+            // Deliberately buffering for the start gate — the player is paused ON
+            // PURPOSE to build the start buffer, so don't flip isPlaying off or arm
+            // recovery. Keep showing buffering until playWhenBuffered starts it.
+            if self.startGateActive {
+                self.isBuffering = true
+                self.isPlaying = true
+                self.updateNowPlaying()
+                return
+            }
             self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
             if status == .waitingToPlayAtSpecifiedRate, let item = player.currentItem {
                 // Diagnostics for the "audio cut out, 30s gap on a fast LAN"
@@ -1215,7 +1401,14 @@ public final class AudioPlayer: NSObject, ObservableObject {
             case .waitingToPlayAtSpecifiedRate:
                 if self.stallStartedAt == nil {
                     self.stallStartedAt = Date()
-                    self.scheduleRecovery()
+                    // If the buffer still holds audio, AVPlayer is just
+                    // rebuffering/evaluating and will resume on its own (the
+                    // .playing case cancels this) — forcing a reload there only
+                    // causes a harder gap (the crossfade/cellular "stutter").
+                    // Be patient unless the buffer is genuinely EMPTY (real
+                    // underrun), which keeps the quick reload.
+                    let hasBuffer = !(player.currentItem?.isPlaybackBufferEmpty ?? true)
+                    self.scheduleRecovery(firstDelayOverride: hasBuffer ? 20 : nil)
                 }
             case .playing:
                 // Recovered (or never stalled): reset the whole recovery ladder.
@@ -1236,7 +1429,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
                     if self.stallStartedAt == nil {
                         DebugLog.write("[AudioPlayer] unexpected pause while playback intended — arming recovery")
                         self.stallStartedAt = Date()
-                        self.scheduleRecovery()
+                        // Same patience as the .waiting case: if there's still
+                        // buffered audio, let it resume rather than hard-reloading.
+                        let hasBuffer = !(player.currentItem?.isPlaybackBufferEmpty ?? true)
+                        self.scheduleRecovery(firstDelayOverride: hasBuffer ? 20 : nil)
                     }
                 } else {
                     self.stallStartedAt = nil
@@ -1286,9 +1482,12 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
     /// Schedule the next recovery reload after a backoff; replaces any pending
     /// one. Called when a stall (or hard item failure) begins.
-    private func scheduleRecovery() {
+    private func scheduleRecovery(firstDelayOverride: TimeInterval? = nil) {
         recoveryWorkItem?.cancel()
-        let delay = recoveryDelay(for: recoveryAttempt)
+        // `firstDelayOverride` lets the caller be MORE patient on the first
+        // attempt (e.g. the buffer still has audio, so AVPlayer will likely
+        // resume on its own and a reload would just cause a harder gap).
+        let delay = (recoveryAttempt == 0 ? firstDelayOverride : nil) ?? recoveryDelay(for: recoveryAttempt)
         let work = DispatchWorkItem { [weak self] in self?.fireRecovery() }
         recoveryWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)

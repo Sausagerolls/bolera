@@ -4,6 +4,9 @@ import BoleraCore
 struct NowPlayingPane_Mac: View {
     @EnvironmentObject var player: AudioPlayer
     @EnvironmentObject var auth: AuthManager
+    // Observe the @Published position mirror — `player.currentTime` isn't
+    // @Published, so reading it alone froze this bar until a state change.
+    @ObservedObject private var clock = AudioPlayer.shared.clock
     @State private var artwork: PlatformImage?
 
     var body: some View {
@@ -25,12 +28,12 @@ struct NowPlayingPane_Mac: View {
                 }
                 .padding(.horizontal)
 
-                ProgressView(value: player.duration > 0 ? player.currentTime / player.duration : 0)
+                ProgressView(value: player.duration > 0 ? min(max(0, clock.currentTime / player.duration), 1) : 0)
                     .progressViewStyle(.linear)
                     .padding(.horizontal)
 
                 HStack {
-                    Text(player.currentTime.mmSS)
+                    Text((player.duration > 0 ? min(clock.currentTime, player.duration) : clock.currentTime).mmSS)
                     Spacer()
                     Text(player.duration.mmSS)
                 }

@@ -6,7 +6,8 @@ struct AlbumDetailView: View {
     @EnvironmentObject var auth: AuthManager
     @ObservedObject private var downloads = DownloadManager.shared
     @State private var songs: [BaseItem] = []
-    @State private var isFavorite: Bool = false
+    @ObservedObject private var favSync = FavoritesSync.shared
+    private var isFavorite: Bool { favSync.isFavorite(album) }
 
     var body: some View {
         ScrollView {
@@ -100,14 +101,13 @@ struct AlbumDetailView: View {
         guard let url = auth.serverURL else { return }
         let client = JellyfinClient(baseURL: url, auth: auth)
         songs = (try? await client.songs(parentId: album.Id)) ?? []
-        isFavorite = album.UserData?.IsFavorite ?? false
+        favSync.reconcile(id: album.Id, serverFavorite: album.UserData?.IsFavorite ?? false)
     }
 
     private func toggleFavorite() {
         guard let url = auth.serverURL else { return }
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        isFavorite.toggle()
-        Task { try? await client.setFavorite(album.Id, favorite: isFavorite) }
+        favSync.setFavorite(album.Id, favorite: !isFavorite,
+                            client: JellyfinClient(baseURL: url, auth: auth))
     }
 
     private var downloadedCount: Int {

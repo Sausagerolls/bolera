@@ -116,16 +116,19 @@ struct BottomPlayerBar_Mac: View {
     @EnvironmentObject var nav: MacNavCoordinator
     @EnvironmentObject var ignored: IgnoredTracksStore
     @EnvironmentObject var pro: ProEntitlementStore
+    // Observe the @Published position mirror — `player.currentTime` isn't
+    // @Published, so the scrubber froze until another @Published changed.
+    @ObservedObject private var clock = AudioPlayer.shared.clock
     let onExpand: () -> Void
-    @State private var artwork: PlatformImage?
-    @State private var favOverride: Bool?
+    @ObservedObject private var favSync = FavoritesSync.shared
     @State private var showQueue = false
     @State private var isScrubbing = false
     @State private var scrub: Double = 0
     @State private var ignoreSlideSetUntil: Date = .distantPast
 
     private var isFavorite: Bool {
-        favOverride ?? (player.current?.UserData?.IsFavorite ?? false)
+        guard let cur = player.current else { return false }
+        return favSync.isFavorite(cur)
     }
     private var isDownloaded: Bool {
         guard let id = player.current?.Id else { return false }
@@ -143,14 +146,6 @@ struct BottomPlayerBar_Mac: View {
                 // Top row: artwork + meta on the left, transport in the
                 // middle, secondary controls on the right.
                 HStack(spacing: 12) {
-                    Button(action: onExpand) {
-                        artworkThumb
-                            .frame(width: 40, height: 40)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open Now Playing")
-                    .disabled(player.current == nil)
                     Button(action: onExpand) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(player.current?.Name ?? "Nothing Playing")
@@ -227,9 +222,12 @@ struct BottomPlayerBar_Mac: View {
             .padding(.vertical, 8)
             .background(.bar)
         }
-        .task(id: player.current?.Id) { await loadArtwork() }
-        .onChange(of: player.current?.Id) { _, _ in
-            favOverride = nil
+        .task(id: player.current?.Id) {
+            // Reconcile the bottom-bar heart with the server on track change.
+            guard let cur = player.current, let url = auth.serverURL else { return }
+            if let fresh = try? await JellyfinClient(baseURL: url, auth: auth).item(cur.Id) {
+                favSync.reconcile(id: cur.Id, serverFavorite: fresh.UserData?.IsFavorite ?? false)
+            }
         }
         .sheet(isPresented: $showQueue) {
             QueueSheet_Mac().frame(minWidth: 420, minHeight: 480)
@@ -327,13 +325,8 @@ struct BottomPlayerBar_Mac: View {
 
     private func toggleFavorite() {
         guard let cur = player.current, let url = auth.serverURL else { return }
-        let target = !isFavorite
-        favOverride = target
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        Task {
-            do { try await client.setFavorite(cur.Id, favorite: target) }
-            catch { await MainActor.run { favOverride = !target } }
-        }
+        favSync.setFavorite(cur.Id, favorite: !isFavorite,
+                            client: JellyfinClient(baseURL: url, auth: auth))
     }
 
     private var repeatIcon: String {
@@ -349,9 +342,9 @@ struct BottomPlayerBar_Mac: View {
     @ViewBuilder
     private var scrubber: some View {
         let safeDur = (player.duration.isFinite && player.duration > 0) ? player.duration : 1
-        let safeCur = player.currentTime.isFinite ? player.currentTime : 0
+        let safeCur = clock.currentTime.isFinite ? clock.currentTime : 0
         HStack(spacing: 6) {
-            Text((isScrubbing ? scrub : safeCur).mmSS)
+            Text(min(isScrubbing ? scrub : safeCur, safeDur).mmSS)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 34, alignment: .trailing)
@@ -392,29 +385,6 @@ struct BottomPlayerBar_Mac: View {
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private var artworkThumb: some View {
-        if let artwork {
-            Image(nsImage: artwork).resizable().scaledToFill()
-        } else {
-            Rectangle().fill(Color.gray.opacity(0.2))
-                .overlay(Image(systemName: "music.note").foregroundStyle(.secondary))
-        }
-    }
-
-    private func loadArtwork() async {
-        artwork = nil
-        guard let current = player.current,
-              let url = auth.serverURL else { return }
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        // Prefer the downloaded local cover so Now Playing art shows offline.
-        let img = await ImageCache.shared.loadArtwork(itemId: current.artworkItemId,
-                                                      tag: current.artworkTag,
-                                                      client: client,
-                                                      maxWidth: 120,
-                                                      headers: ["Authorization": auth.authHeader()])
-        await MainActor.run { self.artwork = img }
-    }
 }
 
 private extension Double {

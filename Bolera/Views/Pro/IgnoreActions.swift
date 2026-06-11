@@ -10,7 +10,7 @@ struct TrackContextMenu: ViewModifier {
     @EnvironmentObject private var pro: ProEntitlementStore
     @EnvironmentObject private var ignored: IgnoredTracksStore
     @State private var activeSheet: TrackMenuSheet?
-    @State private var isFavorite = false
+    @ObservedObject private var favSync = FavoritesSync.shared
 
     // IMPORTANT: every menu entry is a plain Button. Nesting a sub-view that
     // carries its own `.sheet` (the old IgnoreToggleButton) inside a
@@ -24,7 +24,8 @@ struct TrackContextMenu: ViewModifier {
                 Button { AudioPlayer.shared.addToQueue(item) } label: { Label("Add to Queue", systemImage: "text.badge.plus") }
                 Button { activeSheet = .playlist } label: { Label("Add to Playlist…", systemImage: "music.note.list") }
                 Button { toggleFavorite() } label: {
-                    Label(isFavorite ? "Unfavorite" : "Favorite", systemImage: isFavorite ? "heart.fill" : "heart")
+                    let fav = favSync.isFavorite(item)
+                    Label(fav ? "Unfavorite" : "Favorite", systemImage: fav ? "heart.fill" : "heart")
                 }
                 downloadButton
                 ignoreButton
@@ -37,7 +38,8 @@ struct TrackContextMenu: ViewModifier {
                     NavigationStack { PaywallView() }.environmentObject(pro)
                 }
             }
-            .onAppear { isFavorite = item.UserData?.IsFavorite ?? false }
+            // Seed the queue's belief from the item's cached flag if unseen.
+            .onAppear { favSync.reconcile(id: item.Id, serverFavorite: item.UserData?.IsFavorite ?? false) }
     }
 
     @ViewBuilder
@@ -69,9 +71,8 @@ struct TrackContextMenu: ViewModifier {
 
     private func toggleFavorite() {
         guard let url = auth.serverURL else { return }
-        isFavorite.toggle()
-        let fav = isFavorite
-        Task { try? await JellyfinClient(baseURL: url, auth: auth).setFavorite(item.Id, favorite: fav) }
+        favSync.setFavorite(item.Id, favorite: !favSync.isFavorite(item),
+                            client: JellyfinClient(baseURL: url, auth: auth))
     }
 }
 

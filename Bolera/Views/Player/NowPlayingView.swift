@@ -22,7 +22,7 @@ struct NowPlayingContent: View {
     @State private var showSimilarSheet = false
     /// Optimistic favourite overrides keyed by track Id — flips the heart
     /// instantly on tap; falls back to the item's own UserData otherwise.
-    @State private var favouriteOverrides: [String: Bool] = [:]
+    @ObservedObject private var favSync = FavoritesSync.shared
 
     /// Live drag offset for finger-following dismissal. Resets after gesture ends.
     @GestureState private var dragOffset: CGFloat = 0
@@ -55,6 +55,11 @@ struct NowPlayingContent: View {
             }
         }
         .ignoresSafeArea(.container, edges: .top)
+        // Reconcile the heart with the SERVER on each track change: the queue's
+        // cached UserData.IsFavorite (and any optimistic flip) can be stale — a
+        // favourite that failed to persist (e.g. a CarPlay tap in a dead zone)
+        // would otherwise show a phantom red heart the server doesn't back.
+        .task(id: player.current?.Id) { await reconcileFavourite() }
         .modifier(IgnoreOriginalGesture())
         .offset(y: max(0, dragOffset))
         .gesture(
@@ -290,20 +295,24 @@ struct NowPlayingContent: View {
 
     private var isCurrentFavourited: Bool {
         guard let item = player.current else { return false }
-        return favouriteOverrides[item.Id] ?? (item.UserData?.IsFavorite ?? false)
+        return favSync.isFavorite(item)
     }
 
-    /// Toggle favourite on the current track — flips the heart optimistically,
-    /// persists to Jellyfin, and reverts if the call fails.
+    /// Refetch the current track from the server and reconcile the heart to its
+    /// REAL state — without clobbering an unsynced offline toggle.
+    private func reconcileFavourite() async {
+        guard let item = player.current, let url = auth.serverURL else { return }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        guard let fresh = try? await client.item(item.Id) else { return }
+        await favSync.reconcile(id: item.Id, serverFavorite: fresh.UserData?.IsFavorite ?? false)
+    }
+
+    /// Toggle favourite on the current track — optimistic, persisted, and
+    /// queued for retry if offline (FavoritesSync).
     private func toggleFavourite() {
         guard let item = player.current, let url = auth.serverURL else { return }
-        let newValue = !isCurrentFavourited
-        favouriteOverrides[item.Id] = newValue
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        Task {
-            do { try await client.setFavorite(item.Id, favorite: newValue) }
-            catch { await MainActor.run { favouriteOverrides[item.Id] = !newValue } }
-        }
+        favSync.setFavorite(item.Id, favorite: !isCurrentFavourited,
+                            client: JellyfinClient(baseURL: url, auth: auth))
     }
 
     private var controls: some View {
@@ -474,7 +483,7 @@ struct ScrubBar: View {
                 }
             })
             HStack {
-                Text((isScrubbing ? scrub : safeCur).mmSS)
+                Text(min(isScrubbing ? scrub : safeCur, safeDur).mmSS)
                 Spacer()
                 Text(player.duration.mmSS)
             }
@@ -595,13 +604,11 @@ struct NowPlayingActionsSheet: View {
     }
 
     private var favoriteRow: some View {
-        let isFav = player.current?.UserData?.IsFavorite ?? false
+        let isFav = player.current.map { FavoritesSync.shared.isFavorite($0) } ?? false
         return Button {
             guard let cur = player.current, let url = auth.serverURL else { return }
-            let client = JellyfinClient(baseURL: url, auth: auth)
-            Task {
-                try? await client.setFavorite(cur.Id, favorite: !isFav)
-            }
+            FavoritesSync.shared.setFavorite(cur.Id, favorite: !isFav,
+                                             client: JellyfinClient(baseURL: url, auth: auth))
             dismiss()
         } label: {
             Label(isFav ? "Remove from Favorites" : "Add to Favorites",

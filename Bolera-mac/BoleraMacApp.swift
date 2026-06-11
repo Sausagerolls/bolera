@@ -25,6 +25,8 @@ struct BoleraMacApp: App {
         AudioPlayer.shared.configureAudioSession()
         // Resume last session's queue, paused (nothing streams until play).
         AudioPlayer.shared.restorePlaybackState()
+        // Replay any favourites queued while offline (also retries on reconnect).
+        FavoritesSync.shared.flushNow()
     }
 
     var body: some Scene {

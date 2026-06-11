@@ -15,13 +15,13 @@ struct ArtistDetail_Mac: View {
     @State private var topTracks: [BaseItem] = []
     @State private var similar: [BaseItem] = []
     @State private var artwork: PlatformImage?
-    @State private var favOverride: Bool?
+    @ObservedObject private var favSync = FavoritesSync.shared
     @State private var bio: String?
     @State private var bioExpanded: Bool = false
 
     private var current: BaseItem { fullArtist ?? artist }
     private var isFavorite: Bool {
-        favOverride ?? (current.UserData?.IsFavorite ?? false)
+        favSync.isFavorite(current)
     }
     private var isPinned: Bool { pinned.isPinned(itemId: current.Id) }
 
@@ -247,13 +247,8 @@ struct ArtistDetail_Mac: View {
 
     private func toggleFavorite() {
         guard let url = auth.serverURL else { return }
-        let target = !isFavorite
-        favOverride = target
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        Task {
-            do { try await client.setFavorite(current.Id, favorite: target) }
-            catch { await MainActor.run { favOverride = !target } }
-        }
+        favSync.setFavorite(current.Id, favorite: !isFavorite,
+                            client: JellyfinClient(baseURL: url, auth: auth))
     }
 
     private func playInstantMix(shuffle: Bool = false) async {
@@ -268,7 +263,6 @@ struct ArtistDetail_Mac: View {
 
     @MainActor
     private func load() async {
-        favOverride = nil
         artwork = nil
         bioExpanded = false
         let albumsKey = "artist.\(artist.Id).albums"

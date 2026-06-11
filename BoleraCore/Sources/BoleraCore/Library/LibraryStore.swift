@@ -85,6 +85,7 @@ public final class LibraryStore: ObservableObject {
     @Published public var recentlyPlayedAlbums: [BaseItem] = []   // albums ("Recent Albums")
     @Published public var topPlayedTracks: [BaseItem] = []        // tracks ("Top Played Tracks")
     @Published public var favoriteAlbums: [BaseItem] = []
+    @Published public var favoriteTracks: [BaseItem] = []         // tracks ("Favorite Tracks")
     @Published public var lastError: String?
 
     public init() {
@@ -97,6 +98,7 @@ public final class LibraryStore: ObservableObject {
         recentlyPlayedAlbums = LibraryCache.shared.read("home.recentlyPlayedAlbums", as: [BaseItem].self) ?? []
         topPlayedTracks = LibraryCache.shared.read("home.topPlayedTracks", as: [BaseItem].self) ?? []
         favoriteAlbums = LibraryCache.shared.read("home.favoriteAlbums", as: [BaseItem].self) ?? []
+        favoriteTracks = LibraryCache.shared.read("home.favoriteTracks", as: [BaseItem].self) ?? []
         // Seed the Recently Played widget from cache so it has content on a cold
         // launch before the network refresh lands.
         RecentTracksWidgetExport.export(recentlyPlayed, client: nil)
@@ -107,8 +109,9 @@ public final class LibraryStore: ObservableObject {
         async let playedTracks = client.recentlyPlayed(limit: 60)
         async let topTracks = client.topPlayedTracks()
         async let favs = client.favorites(type: "MusicAlbum")
+        async let favTracksReq = client.favorites(type: "Audio")
         do {
-            let (a, pt, tt, fav) = try await (added, playedTracks, topTracks, favs)
+            let (a, pt, tt, fav, favTr) = try await (added, playedTracks, topTracks, favs, favTracksReq)
             let visibility = LibraryVisibilityStore.shared
             // Resolve hidden libraries' album/artist IDs so the filter below
             // catches tracks (whose ParentId is their album, not the library).
@@ -125,6 +128,7 @@ public final class LibraryStore: ObservableObject {
             recentlyPlayedAlbums = recentAlbums
             topPlayedTracks = ignored.filter(visibility.filter(tt))
             favoriteAlbums = visibility.filter(fav)
+            favoriteTracks = ignored.filter(visibility.filter(favTr))
             lastError = nil
             // Cache the unfiltered server response so toggling visibility/ignore
             // shows the right state next launch.
@@ -133,6 +137,7 @@ public final class LibraryStore: ObservableObject {
             LibraryCache.shared.write("home.recentlyPlayedAlbums", value: recentAlbums)
             LibraryCache.shared.write("home.topPlayedTracks", value: tt)
             LibraryCache.shared.write("home.favoriteAlbums", value: fav)
+            LibraryCache.shared.write("home.favoriteTracks", value: favTr)
         } catch is CancellationError {
             // Refresh superseded — keep prior state.
         } catch let err as URLError where err.code == .cancelled {
@@ -155,6 +160,7 @@ public final class LibraryStore: ObservableObject {
         recentlyPlayedAlbums = cached("home.recentlyPlayedAlbums")   // derived stubs; already scoped
         topPlayedTracks = ignored.filter(visibility.filter(cached("home.topPlayedTracks")))
         favoriteAlbums = visibility.filter(cached("home.favoriteAlbums"))
+        favoriteTracks = ignored.filter(visibility.filter(cached("home.favoriteTracks")))
     }
 
     /// Distinct album items derived from a list of tracks, most-recent first.

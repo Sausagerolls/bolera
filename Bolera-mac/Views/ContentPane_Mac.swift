@@ -62,8 +62,11 @@ private struct HomeContent_Mac: View {
                     if !library.recentlyAdded.isEmpty {
                         section("Recently Added", items: library.recentlyAdded)
                     }
+                    if !library.favoriteTracks.isEmpty {
+                        section("Favorite Tracks", items: library.favoriteTracks)
+                    }
                     if !library.favoriteAlbums.isEmpty {
-                        section("Favorites", items: library.favoriteAlbums)
+                        section("Favorite Albums", items: library.favoriteAlbums)
                     }
                 } else {
                     offlineContent
@@ -83,6 +86,16 @@ private struct HomeContent_Mac: View {
                 let client = JellyfinClient(baseURL: url, auth: auth)
                 await library.refresh(client: client)
                 await daily.refreshIfNeeded(client: client, auth: auth, lastFm: lastFm)
+            }
+        }
+        // Refresh "Recent Tracks/Albums" when the playing track changes, so the
+        // home view updates live instead of only on re-appear. Small delay lets
+        // Jellyfin record the play first (playback start is reported ~2s in).
+        .onReceive(AudioPlayer.shared.$currentIndex.dropFirst()) { _ in
+            guard let url = auth.serverURL else { return }
+            Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                await library.refresh(client: JellyfinClient(baseURL: url, auth: auth))
             }
         }
         .sheet(isPresented: $showMoodMix) {

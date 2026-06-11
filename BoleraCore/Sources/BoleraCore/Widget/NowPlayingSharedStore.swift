@@ -15,21 +15,26 @@ public enum NowPlayingSharedStore {
     /// entry in every target's entitlements file.
     public static let appGroupId = "group.com.giantmushroom.bolera"
 
-    private static let snapshotKey = "bolera.nowplaying.snapshot"
+    private static let snapshotFileName = "nowplaying-snapshot.json"
     private static let artworkFileName = "nowplaying-artwork.jpg"
     private static let artworkMaxDimension: CGFloat = 240
-
-    private static var defaults: UserDefaults? { UserDefaults(suiteName: appGroupId) }
 
     public static var containerURL: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId)
     }
 
+    private static var snapshotURL: URL? { containerURL?.appendingPathComponent(snapshotFileName) }
+
     // MARK: - Write (app side)
 
     public static func write(_ snapshot: NowPlayingSnapshot) {
-        guard let defaults, let data = try? JSONEncoder().encode(snapshot) else { return }
-        defaults.set(data, forKey: snapshotKey)
+        // A FILE in the App Group container — NOT App Group `UserDefaults`. On
+        // macOS the widget extension is kept warm by chronod and its cfprefsd
+        // serves a STALE cached copy of a shared UserDefaults suite, so the
+        // widget never saw new writes (the artwork — already a file — was the
+        // only thing that updated). File reads always hit disk fresh.
+        guard let url = snapshotURL, let data = try? JSONEncoder().encode(snapshot) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     /// Downsize + JPEG-encode `image` and write it atomically into the App
@@ -55,8 +60,8 @@ public enum NowPlayingSharedStore {
     // MARK: - Read (widget side)
 
     public static func read() -> NowPlayingSnapshot {
-        guard let defaults,
-              let data = defaults.data(forKey: snapshotKey),
+        guard let url = snapshotURL,
+              let data = try? Data(contentsOf: url),
               let snapshot = try? JSONDecoder().decode(NowPlayingSnapshot.self, from: data)
         else { return .empty }
         return snapshot

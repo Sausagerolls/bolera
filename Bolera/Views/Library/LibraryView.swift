@@ -2,39 +2,81 @@ import SwiftUI
 import BoleraCore
 
 struct LibraryView: View {
-    enum Tab: String, CaseIterable { case artists = "Artists", albums = "Albums", playlists = "Playlists", downloaded = "Downloaded" }
-    @State private var tab: Tab = .artists
     @EnvironmentObject var connectivity: ConnectivityStore
 
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $tab) {
-                ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.top, 8)
-
-            Group {
-                // Offline: force the Downloaded view regardless of the selected
-                // segment (keeping the switch as the single structural branch so
-                // the view tree shape stays stable and nav doesn't reset).
-                switch (connectivity.isOnline ? tab : .downloaded) {
-                case .artists: ArtistsView()
-                case .albums: AlbumsView()
-                case .playlists: PlaylistsView()
-                case .downloaded: DownloadedView()
-                }
+    /// A list of categories that each drill into their own full screen — keeps
+    /// the Library uncluttered as sections grow (vs a cramped segmented bar).
+    /// Library categories — pushed as VALUES (not view-based NavigationLinks),
+    /// so the whole stack is value-driven. Mixing view-based `NavigationLink {}`
+    /// rows with a value-based `navigationDestination` in one NavigationStack is
+    /// what double-fired the first push (tap album → flick → list reappears).
+    enum Category: String, Hashable, CaseIterable {
+        case favorites = "Favorites", artists = "Artists", albums = "Albums"
+        case playlists = "Playlists", downloaded = "Downloaded"
+        var icon: String {
+            switch self {
+            case .favorites:  return "heart.fill"
+            case .artists:    return "music.mic"
+            case .albums:     return "square.stack.fill"
+            case .playlists:  return "list.bullet.rectangle.portrait.fill"
+            case .downloaded: return "arrow.down.circle.fill"
             }
         }
+        var tint: Color { self == .favorites ? .pink : (self == .downloaded ? .green : .accentColor) }
+    }
+
+    var body: some View {
+        List {
+            if connectivity.isOnline {
+                Section {
+                    ForEach([Category.favorites, .artists, .albums, .playlists], id: \.self) { categoryRow($0) }
+                }
+            } else {
+                Section {
+                    Label("You're offline — showing downloads", systemImage: "wifi.slash")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Section { categoryRow(.downloaded) }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(BoleraBackground())
         .navigationTitle("Library")
-        .onChange(of: connectivity.isOnline) { _, online in
-            if !online { tab = .downloaded }
+        // Everything in this stack is value-based + every destination is declared
+        // at the ROOT (here) — no view-based links, no mid-stack destinations.
+        .navigationDestination(for: Category.self) { cat in
+            categoryDestination(cat).navigationTitle(cat.rawValue)
         }
-        .onAppear {
-            if !connectivity.isOnline { tab = .downloaded }
+        .navigationDestination(for: BaseItem.self) { item in
+            switch item.type {
+            case "MusicArtist": ArtistDetailView(artist: item)
+            case "Playlist":    PlaylistDetailView(playlist: item)
+            default:            AlbumDetailView(album: item)
+            }
+        }
+    }
+
+    private func categoryRow(_ cat: Category) -> some View {
+        NavigationLink(value: cat) {
+            Label {
+                Text(cat.rawValue).font(.body)
+            } icon: {
+                Image(systemName: cat.icon).foregroundStyle(cat.tint).frame(width: 28)
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    @ViewBuilder
+    private func categoryDestination(_ cat: Category) -> some View {
+        switch cat {
+        case .favorites:  FavoritesView()
+        case .artists:    ArtistsView()
+        case .albums:     AlbumsView()
+        case .playlists:  PlaylistsView()
+        case .downloaded: DownloadedView()
         }
     }
 
@@ -201,6 +243,115 @@ struct LetterScrubOverlay: View {
     }
 }
 
+/// Dedicated Favourites browser (Tracks / Albums / Artists) — mirrors the mac
+/// `FavoritesContent_Mac`. Tracks play on tap; albums/artists push to detail.
+struct FavoritesView: View {
+    enum Mode: String, CaseIterable { case tracks = "Tracks", albums = "Albums", artists = "Artists" }
+    @EnvironmentObject var auth: AuthManager
+    @State private var mode: Mode = .tracks
+    @State private var tracks: [BaseItem] = []
+    @State private var albums: [BaseItem] = []
+    @State private var artists: [BaseItem] = []
+    @State private var loading = false
+
+    private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $mode) {
+                ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+
+            Group {
+                switch mode {
+                case .tracks:  trackList
+                case .albums:  grid(albums, isArtist: false)
+                case .artists: grid(artists, isArtist: true)
+                }
+            }
+            .overlay { if loading && tracks.isEmpty && albums.isEmpty && artists.isEmpty { ProgressView() } }
+        }
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    @ViewBuilder private var trackList: some View {
+        if tracks.isEmpty && !loading {
+            ContentUnavailableView("No Favourite Tracks", systemImage: "heart",
+                description: Text("Tap the heart on a track to add it here."))
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(tracks.enumerated()), id: \.element.id) { idx, track in
+                        Button { AudioPlayer.shared.play(items: tracks, startAt: idx) } label: {
+                            HStack(spacing: 12) {
+                                JellyfinImage(itemId: track.AlbumId ?? track.Id, tag: track.AlbumPrimaryImageTag, maxWidth: 120, cornerRadius: 6)
+                                    .frame(width: 44, height: 44)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(track.Name).lineLimit(1)
+                                    Text(track.primaryArtistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal).padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .trackContextMenu(track)
+                        Divider().padding(.leading, 68)
+                    }
+                }
+                Color.clear.frame(height: 100)
+            }
+        }
+    }
+
+    @ViewBuilder private func grid(_ items: [BaseItem], isArtist: Bool) -> some View {
+        if items.isEmpty && !loading {
+            ContentUnavailableView(isArtist ? "No Favourite Artists" : "No Favourite Albums", systemImage: "heart")
+        } else {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 18) {
+                    ForEach(items) { item in
+                        NavigationLink(value: item) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Color.clear.aspectRatio(1, contentMode: .fit)
+                                    .overlay(JellyfinImage(itemId: item.artworkItemId, tag: item.artworkTag, maxWidth: 400, cornerRadius: isArtist ? 999 : 10))
+                                Text(item.Name).font(.subheadline).lineLimit(1)
+                                if !isArtist {
+                                    Text(item.primaryArtistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding()
+                Color.clear.frame(height: 100)
+            }
+        }
+    }
+
+    private func load() async {
+        guard let url = auth.serverURL else { return }
+        loading = true
+        defer { loading = false }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        async let t = client.favorites(type: "Audio", limit: 500)
+        async let al = client.favorites(type: "MusicAlbum", limit: 500)
+        async let ar = client.favorites(type: "MusicArtist", limit: 500)
+        let tr = (try? await t) ?? [], alb = (try? await al) ?? [], art = (try? await ar) ?? []
+        let vis = LibraryVisibilityStore.shared, ign = IgnoredTracksStore.shared
+        tracks = ign.filter(vis.filter(tr))
+        albums = vis.filter(alb)
+        artists = vis.filter(art)
+    }
+}
+
 struct ArtistsView: View {
     @EnvironmentObject var auth: AuthManager
     @State private var items: [BaseItem] = []
@@ -261,14 +412,6 @@ struct ArtistsView: View {
             LetterScrubOverlay(letter: activeScrubLetter)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 .allowsHitTesting(false)
-        }
-        .navigationDestination(for: BaseItem.self) { item in
-            switch item.type {
-            case "MusicAlbum":  AlbumDetailView(album: item)
-            case "MusicArtist": ArtistDetailView(artist: item)
-            case "Playlist":    PlaylistDetailView(playlist: item)
-            default:            ArtistDetailView(artist: item)
-            }
         }
         .task {
             if items.isEmpty, let cached = LibraryCache.shared.read(cacheKey, as: [BaseItem].self) {
@@ -362,9 +505,6 @@ struct AlbumsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 .allowsHitTesting(false)
         }
-        .navigationDestination(for: BaseItem.self) { item in
-            AlbumDetailView(album: item)
-        }
         .task {
             if items.isEmpty, let cached = LibraryCache.shared.read(cacheKey, as: [BaseItem].self) {
                 items = cached
@@ -416,9 +556,6 @@ struct PlaylistsView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .navigationDestination(for: BaseItem.self) { item in
-            PlaylistDetailView(playlist: item)
-        }
         .task {
             if items.isEmpty, let cached = LibraryCache.shared.read(cacheKey, as: [BaseItem].self) {
                 items = cached

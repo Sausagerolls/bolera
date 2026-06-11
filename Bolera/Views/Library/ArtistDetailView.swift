@@ -185,10 +185,9 @@ struct ArtistDetailView: View {
             }
         }
         .background(BoleraBackground().ignoresSafeArea())
-        .navigationDestination(for: BaseItem.self) { item in
-            if item.type == "MusicArtist" { ArtistDetailView(artist: item) }
-            else { AlbumDetailView(album: item) }
-        }
+        // No navigationDestination here — each entry stack (Home/Search/Library)
+        // declares the BaseItem destination at its ROOT. A mid-stack destination
+        // double-fires the next push.
         .navigationTitle(artist.Name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

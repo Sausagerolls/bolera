@@ -27,6 +27,8 @@ struct BoleraApp: App {
         // Resume the last session's queue, PAUSED — mini player shows where you
         // left off; nothing streams until you press play.
         AudioPlayer.shared.restorePlaybackState()
+        // Replay any favourites queued while offline (also retries on reconnect).
+        FavoritesSync.shared.flushNow()
     }
 
     var body: some Scene {

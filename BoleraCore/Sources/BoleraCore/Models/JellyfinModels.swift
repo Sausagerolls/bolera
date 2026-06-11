@@ -236,3 +236,4 @@ public struct PlaybackStopInfo: Encodable {
         self.PositionTicks = PositionTicks
     }
 }
+

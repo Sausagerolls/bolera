@@ -7,6 +7,11 @@ import BoleraCore
 struct ImmersivePlayer_Mac: View {
     @EnvironmentObject var player: AudioPlayer
     @EnvironmentObject var auth: AuthManager
+    // `AudioPlayer.currentTime` is intentionally NOT @Published (avoids 2Hz
+    // churn); the published position lives on `clock`. Observe it so the
+    // scrubber actually advances during playback instead of only refreshing
+    // when some other @Published (e.g. isPlaying on pause) changes.
+    @ObservedObject private var clock = AudioPlayer.shared.clock
     @EnvironmentObject var downloads: DownloadManager
     @EnvironmentObject var sleepTimer: SleepTimer
     let onDismiss: () -> Void
@@ -27,7 +32,7 @@ struct ImmersivePlayer_Mac: View {
     /// Local override so the heart icon updates instantly. Maps trackId →
     /// current favorite state, overriding the (possibly nil) UserData on the
     /// queue item. Server is updated in background; reverts on failure.
-    @State private var favoriteOverride: [String: Bool] = [:]
+    @ObservedObject private var favSync = FavoritesSync.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,6 +67,9 @@ struct ImmersivePlayer_Mac: View {
         .background(backdrop.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .task(id: player.current?.Id) { await loadArtwork() }
+        // Reconcile the heart with the server on each track change (cached/
+        // optimistic favourite state can be stale — see iOS NowPlayingView).
+        .task(id: player.current?.Id) { await reconcileFavourite() }
         .onChange(of: player.current?.Id) { _, _ in
             isScrubbing = false
             scrub = 0
@@ -284,9 +292,8 @@ struct ImmersivePlayer_Mac: View {
     }
 
     private var isFavorite: Bool {
-        guard let id = player.current?.Id else { return false }
-        if let override = favoriteOverride[id] { return override }
-        return player.current?.UserData?.IsFavorite ?? false
+        guard let cur = player.current else { return false }
+        return favSync.isFavorite(cur)
     }
     private var isDownloaded: Bool {
         guard let id = player.current?.Id else { return false }
@@ -327,29 +334,26 @@ struct ImmersivePlayer_Mac: View {
             downloads.download(item, using: JellyfinClient(baseURL: url, auth: auth))
         }
     }
+    /// Reconcile the heart to the server's real state (won't clobber an unsynced
+    /// offline toggle — see FavoritesSync).
+    private func reconcileFavourite() async {
+        guard let cur = player.current, let url = auth.serverURL else { return }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        guard let fresh = try? await client.item(cur.Id) else { return }
+        favSync.reconcile(id: cur.Id, serverFavorite: fresh.UserData?.IsFavorite ?? false)
+    }
+
     private func favoriteToggle() {
         guard let cur = player.current, let url = auth.serverURL else { return }
-        let target = !isFavorite
-        // Optimistic UI update.
-        favoriteOverride[cur.Id] = target
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        Task {
-            do {
-                try await client.setFavorite(cur.Id, favorite: target)
-            } catch {
-                await MainActor.run {
-                    // Revert on failure.
-                    favoriteOverride[cur.Id] = !target
-                }
-            }
-        }
+        favSync.setFavorite(cur.Id, favorite: !isFavorite,
+                            client: JellyfinClient(baseURL: url, auth: auth))
     }
 
     // MARK: - Scrubber
 
     private var scrubber: some View {
         let safeDur = (player.duration.isFinite && player.duration > 0) ? player.duration : 1
-        let safeCur = player.currentTime.isFinite ? player.currentTime : 0
+        let safeCur = clock.currentTime.isFinite ? clock.currentTime : 0
         return VStack(spacing: 4) {
             Slider(value: Binding(
                 get: {
@@ -372,7 +376,7 @@ struct ImmersivePlayer_Mac: View {
             })
             .tint(.white)
             HStack {
-                Text((isScrubbing ? scrub : player.currentTime).mmSS)
+                Text(min(isScrubbing ? scrub : safeCur, safeDur).mmSS)
                 Spacer()
                 Text(player.duration.mmSS)
             }

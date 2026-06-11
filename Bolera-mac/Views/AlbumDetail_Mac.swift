@@ -13,11 +13,11 @@ struct AlbumDetail_Mac: View {
     @State private var songs: [BaseItem] = []
     @State private var artwork: PlatformImage?
     @State private var loading = false
-    @State private var favOverride: Bool?
+    @ObservedObject private var favSync = FavoritesSync.shared
 
     private var current: BaseItem { fullAlbum ?? album }
     private var isFavorite: Bool {
-        favOverride ?? (current.UserData?.IsFavorite ?? false)
+        favSync.isFavorite(current)
     }
     private var isPinned: Bool { pinned.isPinned(itemId: current.Id) }
 
@@ -199,13 +199,8 @@ struct AlbumDetail_Mac: View {
 
     private func toggleFavorite() {
         guard let url = auth.serverURL else { return }
-        let target = !isFavorite
-        favOverride = target
-        let client = JellyfinClient(baseURL: url, auth: auth)
-        Task {
-            do { try await client.setFavorite(current.Id, favorite: target) }
-            catch { await MainActor.run { favOverride = !target } }
-        }
+        favSync.setFavorite(current.Id, favorite: !isFavorite,
+                            client: JellyfinClient(baseURL: url, auth: auth))
     }
 
     /// Replacement for the plain icon button: shows a spinner + remaining
@@ -286,7 +281,6 @@ struct AlbumDetail_Mac: View {
 
     @MainActor
     private func load() async {
-        favOverride = nil
         fullAlbum = nil
         artwork = nil
         let songsKey = "album.\(album.Id).songs"

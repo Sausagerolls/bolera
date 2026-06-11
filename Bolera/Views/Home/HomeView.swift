@@ -51,8 +51,11 @@ struct HomeView: View {
                     if !library.recentlyAdded.isEmpty {
                         section(title: "Recently Added", items: library.recentlyAdded)
                     }
+                    if !library.favoriteTracks.isEmpty {
+                        section(title: "Favorite Tracks", items: library.favoriteTracks)
+                    }
                     if !library.favoriteAlbums.isEmpty {
-                        section(title: "Favorites", items: library.favoriteAlbums)
+                        section(title: "Favorite Albums", items: library.favoriteAlbums)
                     }
                 } else {
                     offlineContent

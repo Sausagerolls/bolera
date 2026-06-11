@@ -14,12 +14,49 @@ struct SidebarView_Mac: View {
     @State private var libraries: [BaseItem] = []
     @State private var loadingLibs = false
     @State private var avatar: PlatformImage?
+    @State private var albumArt: PlatformImage?
 
     var body: some View {
         VStack(spacing: 0) {
             sidebarList
             statusBanner
+            nowPlayingArt
         }
+    }
+
+    /// Spotify-style now-playing cover pinned to the bottom of the sidebar:
+    /// full sidebar width, square (height == width). Sits BELOW the user /
+    /// Pro / settings banner. Only shown while something is loaded.
+    @ViewBuilder
+    private var nowPlayingArt: some View {
+        if player.current != nil {
+            Color.clear
+                .frame(maxWidth: .infinity)
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    if let albumArt {
+                        Image(nsImage: albumArt).resizable().scaledToFill()
+                    } else {
+                        Rectangle().fill(Color.gray.opacity(0.2))
+                            .overlay(Image(systemName: "music.note")
+                                .font(.largeTitle).foregroundStyle(.secondary))
+                    }
+                }
+                .clipped()
+                .task(id: player.current?.Id) { await loadAlbumArt() }
+        }
+    }
+
+    private func loadAlbumArt() async {
+        await MainActor.run { albumArt = nil }
+        guard let current = player.current, let url = auth.serverURL else { return }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        let img = await ImageCache.shared.loadArtwork(itemId: current.artworkItemId,
+                                                      tag: current.artworkTag,
+                                                      client: client,
+                                                      maxWidth: 640,
+                                                      headers: ["Authorization": auth.authHeader()])
+        await MainActor.run { self.albumArt = img }
     }
 
     private var sidebarList: some View {

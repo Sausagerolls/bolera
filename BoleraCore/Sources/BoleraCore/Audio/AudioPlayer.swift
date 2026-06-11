@@ -318,9 +318,15 @@ public final class AudioPlayer: NSObject, ObservableObject {
                         DebugLog.write("[AudioPlayer] path expensive=\(expensive) — cleared \(expensive ? "Wi-Fi-warmed" : "cellular-warmed") assets")
                     }
                 }
-                // Only act when we're actually stalled (recoverNowIfStalled
-                // guards on that), so frequent path updates are cheap no-ops.
-                if satisfied { self.recoverNowIfStalled(wasSatisfied ? "network path changed" : "network restored") }
+                // Only FORCE a reload when the network genuinely came back after
+                // being lost (dead zone / tunnel). On a Wi-Fi→cellular HANDOFF
+                // (was satisfied, still satisfied, just a different interface),
+                // do NOT reload — AVPlayer fails over to the new interface itself
+                // and keeps playing from its buffer. Force-reopening there is what
+                // re-buffered (and sometimes restarted) the track on the drive.
+                // A genuine handoff stall that doesn't self-heal is still caught
+                // by the stall watchdog / timeControl recovery (patiently).
+                if satisfied && !wasSatisfied { self.recoverNowIfStalled("network restored") }
             }
         }
         audioNetMonitor.start(queue: audioNetQueue)
@@ -1644,11 +1650,15 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// session and rebuild the current item so we don't sit "playing" against a
     /// dead engine — silent, with the progress bar still ticking.
     @objc private func handleMediaReset(_ note: Notification) {
-        DebugLog.write("[AudioPlayer] media services were reset — reconfiguring + reloading")
+        let resumeAt = currentTime
+        DebugLog.write("[AudioPlayer] media services were reset — reconfiguring + reloading at \(Int(resumeAt))s")
         configureAudioSession()
         preloadedAssets.removeAll()
-        let resume = isPlaying
-        loadCurrent(autoplay: resume)
+        let resume = isPlaying || userWantsPlayback
+        // Resume at the position we were at — a media-services reset must NOT
+        // restart the track from 0:00 (it did, which is one cause of the
+        // "song restarted" oddity heard while driving).
+        loadCurrent(autoplay: resume, resumeAt: resumeAt > 1 ? resumeAt : nil)
     }
     #endif
 

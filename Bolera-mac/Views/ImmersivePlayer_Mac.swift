@@ -514,16 +514,13 @@ struct InlineVisualizer_Mac: View {
                 let dt = max(0.001, min(0.1, now - state.lastT))
                 state.lastT = now
 
+                // React to REAL audio levels only. No synthetic/preset motion —
+                // if there are no live levels (tap not delivering, paused), the
+                // visualiser settles to still rather than faking a rhythm.
                 let target: [Float] = {
                     if let real = player.activeAudioProcessor?.levels,
                        real.contains(where: { $0 > 0.01 }) {
                         return Self.expand(real, to: state.smoothed.count)
-                    }
-                    if player.isPlaying {
-                        return (0..<state.smoothed.count).map { i in
-                            let phase = Double(i) * 0.55 + now * 2.0
-                            return Float(max(0.05, 0.35 + 0.25 * sin(phase) + 0.2 * sin(phase * 1.7)))
-                        }
                     }
                     return Array(repeating: 0, count: state.smoothed.count)
                 }()
@@ -540,7 +537,6 @@ struct InlineVisualizer_Mac: View {
                 switch style {
                 case .bars:
                     Visualizers_Mac.drawBars(gfx: gfx, size: size, levels: state.smoothed)
-                    Visualizers_Mac.drawWave(gfx: gfx, size: size, levels: state.smoothed, t: now)
                 case .wave:
                     Visualizers_Mac.drawBigWave(gfx: gfx, size: size, levels: state.smoothed, t: now)
                 case .radial:
@@ -563,6 +559,15 @@ struct InlineVisualizer_Mac: View {
                     if s == style { Image(systemName: "checkmark") }
                 }
             }
+        }
+        // The audio render thread only publishes levels while a visualiser is
+        // watching (avoids per-buffer main-thread churn). The mac visualiser
+        // never armed this — so it never got real levels and used to fake a
+        // rhythm. Arm it on appear + re-arm when the track (processor) changes.
+        .onAppear { player.activeAudioProcessor?.startObservingLevels() }
+        .onDisappear { player.activeAudioProcessor?.stopObservingLevels() }
+        .onChange(of: player.current?.Id) { _, _ in
+            player.activeAudioProcessor?.startObservingLevels()
         }
     }
 

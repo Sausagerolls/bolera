@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import BoleraCore
 
 /// A home-screen rail whose header drills into a full-list page.
@@ -29,6 +30,7 @@ enum SidebarSelection: Hashable {
     case library(String)  // Jellyfin library Id
     case albumDetail(BaseItem)
     case artistDetail(BaseItem)
+    case playlistDetail(BaseItem)
 }
 
 struct MainWindow_Mac: View {
@@ -40,7 +42,7 @@ struct MainWindow_Mac: View {
 
     @State private var search: String = ""
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var immersive: Bool = false
+    @State private var swipeMonitor: Any?
     @ObservedObject private var connectivity = ConnectivityStore.shared
 
     private var sidebarSelectionBinding: Binding<SidebarSelection?> {
@@ -57,9 +59,15 @@ struct MainWindow_Mac: View {
 
     var body: some View {
         Group {
-            if immersive {
+            if nav.microPlayer {
+                MicroPlayer_Mac()
+                    .transition(.opacity)
+                    .toolbar(.hidden, for: .windowToolbar)
+                    .toolbarBackground(.hidden, for: .windowToolbar)
+                    .ignoresSafeArea()
+            } else if nav.showImmersive {
                 ImmersivePlayer_Mac {
-                    withAnimation(.easeInOut(duration: 0.25)) { immersive = false }
+                    withAnimation(.easeInOut(duration: 0.25)) { nav.showImmersive = false }
                 }
                 .transition(.opacity)
                 // Hide the toolbar + paint behind the title bar so the
@@ -76,13 +84,28 @@ struct MainWindow_Mac: View {
                     VStack(spacing: 0) {
                         ContentPane_Mac(selection: nav.selection ?? .home, searchQuery: $search)
                         BottomPlayerBar_Mac {
-                            withAnimation(.easeInOut(duration: 0.25)) { immersive = true }
+                            withAnimation(.easeInOut(duration: 0.25)) { nav.showImmersive = true }
                         }
                     }
                 }
                 .navigationSplitViewStyle(.balanced)
                 .transition(.opacity)
                 .toolbar {
+                    ToolbarItemGroup(placement: .navigation) {
+                        Button { nav.goBack() } label: {
+                            Image(systemName: "chevron.left")
+                        }
+                        .help("Back (⌘[ or swipe right with two fingers)")
+                        .keyboardShortcut("[", modifiers: .command)
+                        .disabled(!nav.canGoBack)
+
+                        Button { nav.goForward() } label: {
+                            Image(systemName: "chevron.right")
+                        }
+                        .help("Forward (⌘] or swipe left with two fingers)")
+                        .keyboardShortcut("]", modifiers: .command)
+                        .disabled(!nav.canGoForward)
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         Button {
                             nav.selection = .search
@@ -96,12 +119,33 @@ struct MainWindow_Mac: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if !connectivity.isOnline && !immersive {
+            if !connectivity.isOnline && !nav.showImmersive {
                 OfflineBanner_Mac()
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: 0.25), value: connectivity.isOnline)
+        .background(MicroWindowController(active: nav.microPlayer))
+        .onAppear(perform: installSwipeMonitor)
+        .onDisappear {
+            if let m = swipeMonitor { NSEvent.removeMonitor(m); swipeMonitor = nil }
+        }
+    }
+
+    /// Two/three-finger horizontal trackpad swipes drive Back/Forward, matching
+    /// macOS "swipe between pages". A local monitor catches the swipe regardless
+    /// of which subview is focused (no responder-chain juggling). deltaX > 0 is a
+    /// swipe to the RIGHT → Back; deltaX < 0 a swipe LEFT → Forward.
+    private func installSwipeMonitor() {
+        guard swipeMonitor == nil else { return }
+        swipeMonitor = NSEvent.addLocalMonitorForEvents(matching: .swipe) { event in
+            if event.deltaX > 0 {
+                nav.goBack()
+            } else if event.deltaX < 0 {
+                nav.goForward()
+            }
+            return event
+        }
     }
 }
 
@@ -142,6 +186,7 @@ struct BottomPlayerBar_Mac: View {
     @State private var isScrubbing = false
     @State private var scrub: Double = 0
     @State private var ignoreSlideSetUntil: Date = .distantPast
+    @Environment(\.openWindow) private var openWindow
 
     private var isFavorite: Bool {
         guard let cur = player.current else { return false }
@@ -227,6 +272,9 @@ struct BottomPlayerBar_Mac: View {
                             onExpand()
                         }
                         .keyboardShortcut("n", modifiers: [.command, .shift])
+                        iconButton("pip.enter", help: "Micro Player") {
+                            nav.microPlayer = true
+                        }
                     }
                     .disabled(player.current == nil)
                     .frame(width: 200, alignment: .trailing)
@@ -410,4 +458,161 @@ private extension Double {
         let total = max(0, Int(self))
         return String(format: "%d:%02d", total / 60, total % 60)
     }
+}
+
+// MARK: - Micro Player
+
+/// Compact player: the whole window becomes the album cover with transport
+/// controls that fade in on hover, blended under a transparent title bar.
+/// Entered from the mini-player's Micro Player button; the title-bar shrink +
+/// restore is handled by `MicroWindowController`.
+struct MicroPlayer_Mac: View {
+    @EnvironmentObject var player: AudioPlayer
+    @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var nav: MacNavCoordinator
+    @State private var art: PlatformImage?
+    @State private var hovering = false
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let art {
+                Image(nsImage: art).resizable().scaledToFill()
+            } else {
+                LinearGradient(colors: [Color.accentColor.opacity(0.5), .black],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .overlay(Image(systemName: "music.note")
+                        .font(.system(size: 44)).foregroundStyle(.white.opacity(0.6)))
+            }
+
+            // Controls + exit, revealed on hover over a darkening scrim.
+            if hovering {
+                LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.6)],
+                               startPoint: .center, endPoint: .bottom)
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { nav.microPlayer = false }
+                        } label: {
+                            Image(systemName: "arrow.down.right.and.arrow.up.left")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(7)
+                                .background(.black.opacity(0.5), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Exit Micro Player")
+                    }
+                    Spacer()
+                    VStack(spacing: 4) {
+                        Text(player.current?.Name ?? "")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.white).lineLimit(1)
+                        HStack(spacing: 26) {
+                            ctrl("backward.fill", 16) { player.previous() }
+                            ctrl(player.isPlaying ? "pause.fill" : "play.fill", 24) { player.togglePlayPause() }
+                            ctrl("forward.fill", 16) { player.next() }
+                        }
+                    }
+                    .padding(.bottom, 14)
+                }
+                .padding(10)
+                .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .ignoresSafeArea()
+        .onHover { h in withAnimation(.easeInOut(duration: 0.15)) { hovering = h } }
+        .task(id: player.current?.Id) { await loadArt() }
+    }
+
+    private func ctrl(_ icon: String, _ size: CGFloat, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func loadArt() async {
+        art = nil
+        guard let cur = player.current, let url = auth.serverURL else { return }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        let img = await ImageCache.shared.loadArtwork(
+            itemId: cur.artworkItemId, tag: cur.artworkTag,
+            client: client, maxWidth: 640,
+            headers: ["Authorization": auth.authHeader()])
+        await MainActor.run { self.art = img }
+    }
+}
+
+/// Shrinks the hosting window into a small, square, floating, blended panel
+/// while the Micro Player is active, and restores the previous geometry/chrome
+/// when it exits.
+///
+/// Freeze fix: the earlier version animated `setFrame` while SwiftUI's content
+/// `minWidth` was still 960 — AppKit clamped each animation frame back up to the
+/// content minimum, fighting the shrink and beach-balling until layout happened
+/// to settle. Now we (1) lower the window's own `minSize`/`maxSize` FIRST so the
+/// new frame is legal immediately, (2) set the frame WITHOUT animation, and
+/// (3) collapse/restore exactly once via a saved-state guard.
+private struct MicroWindowController: NSViewRepresentable {
+    let active: Bool
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        let active = self.active
+        DispatchQueue.main.async {
+            guard let win = nsView.window else { return }
+            let c = context.coordinator
+            if active {
+                guard c.saved == nil else { return }   // already collapsed
+                c.saved = Saved(frame: win.frame,
+                                minSize: win.minSize,
+                                maxSize: win.maxSize,
+                                titleVisibility: win.titleVisibility,
+                                titlebarTransparent: win.titlebarAppearsTransparent,
+                                movableByBackground: win.isMovableByWindowBackground,
+                                level: win.level)
+                let side: CGFloat = 260
+                // Relax size limits BEFORE resizing so the small frame is legal.
+                win.minSize = NSSize(width: side, height: side)
+                win.maxSize = NSSize(width: side, height: side)
+                win.titleVisibility = .hidden
+                win.titlebarAppearsTransparent = true
+                win.isMovableByWindowBackground = true
+                win.level = .floating
+                var f = win.frame
+                f.origin.y += f.height - side   // keep the top edge anchored
+                f.size = NSSize(width: side, height: side)
+                win.setFrame(f, display: true, animate: false)
+            } else if let saved = c.saved {
+                // Restore limits first, then geometry/chrome (no animation).
+                win.maxSize = saved.maxSize
+                win.minSize = saved.minSize
+                win.titleVisibility = saved.titleVisibility
+                win.titlebarAppearsTransparent = saved.titlebarTransparent
+                win.isMovableByWindowBackground = saved.movableByBackground
+                win.level = saved.level
+                win.setFrame(saved.frame, display: true, animate: false)
+                c.saved = nil
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    struct Saved {
+        let frame: NSRect
+        let minSize: NSSize
+        let maxSize: NSSize
+        let titleVisibility: NSWindow.TitleVisibility
+        let titlebarTransparent: Bool
+        let movableByBackground: Bool
+        let level: NSWindow.Level
+    }
+    final class Coordinator { var saved: Saved? }
 }

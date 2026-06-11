@@ -31,7 +31,6 @@ struct ArtistDetail_Mac: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                backButtonRow
                 header
                 if let bio, !bio.isEmpty {
                     bioBlock(bio)
@@ -61,21 +60,6 @@ struct ArtistDetail_Mac: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: artist.Id) { await load() }
-    }
-
-    private var backButtonRow: some View {
-        HStack {
-            Button { nav.goBack() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.title3.weight(.semibold))
-                    .frame(width: 36, height: 36)
-                    .background(.ultraThinMaterial, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut("[", modifiers: .command)
-            .help("Back (⌘[)")
-            Spacer()
-        }
     }
 
     private var header: some View {

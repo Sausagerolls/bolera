@@ -24,7 +24,6 @@ struct AlbumDetail_Mac: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                backButtonRow
                 header
                 actionBar
                 trackList
@@ -33,21 +32,6 @@ struct AlbumDetail_Mac: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: album.Id) { await load() }
-    }
-
-    private var backButtonRow: some View {
-        HStack {
-            Button { nav.goBack() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.title3.weight(.semibold))
-                    .frame(width: 36, height: 36)
-                    .background(.ultraThinMaterial, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut("[", modifiers: .command)
-            .help("Back (⌘[)")
-            Spacer()
-        }
     }
 
     private var header: some View {
@@ -164,7 +148,7 @@ struct AlbumDetail_Mac: View {
                     .frame(width: 32, alignment: .trailing)
                     VStack(alignment: .leading) {
                         Text(song.Name).lineLimit(1)
-                        if song.primaryArtistName != current.primaryArtistName {
+                        if !song.primaryArtistName.isEmpty {
                             Text(song.primaryArtistName)
                                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }

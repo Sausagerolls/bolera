@@ -15,6 +15,8 @@ struct SidebarView_Mac: View {
     @State private var loadingLibs = false
     @State private var avatar: PlatformImage?
     @State private var albumArt: PlatformImage?
+    @State private var showVisualiser = false
+    @State private var artHovering = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,7 +36,9 @@ struct SidebarView_Mac: View {
                 .frame(maxWidth: .infinity)
                 .aspectRatio(1, contentMode: .fit)
                 .overlay {
-                    if let albumArt {
+                    if showVisualiser {
+                        InlineVisualizer_Mac().environmentObject(player)
+                    } else if let albumArt {
                         Image(nsImage: albumArt).resizable().scaledToFill()
                     } else {
                         Rectangle().fill(Color.gray.opacity(0.2))
@@ -42,8 +46,35 @@ struct SidebarView_Mac: View {
                                 .font(.largeTitle).foregroundStyle(.secondary))
                     }
                 }
+                // Hover affordance: a button (top-right) that opens the full player.
+                .overlay(alignment: .topTrailing) {
+                    if artHovering {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.25)) { nav.showImmersive = true }
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(7)
+                                .background(.black.opacity(0.55), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open full player")
+                        .padding(8)
+                    }
+                }
                 .clipped()
-                .task(id: player.current?.Id) { await loadAlbumArt() }
+                .contentShape(Rectangle())
+                // Click the cover to toggle an inline visualiser in its place.
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.2)) { showVisualiser.toggle() }
+                }
+                .onHover { artHovering = $0 }
+                .help(showVisualiser ? "Show artwork" : "Show visualiser")
+                .task(id: player.current?.Id) {
+                    showVisualiser = false
+                    await loadAlbumArt()
+                }
         }
     }
 

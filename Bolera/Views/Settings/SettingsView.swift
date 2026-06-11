@@ -120,7 +120,6 @@ private struct StreamingSettingsView: View {
             }
 
             Section("Playback") {
-                CrossfadeRow()
                 NavigationLink {
                     EQView()
                 } label: {
@@ -130,26 +129,6 @@ private struct StreamingSettingsView: View {
         }
         .scrollContentBackground(.hidden)
         .navigationTitle("Streaming")
-    }
-}
-
-/// Isolated subview that owns the AudioPlayer dependency so the whole
-/// StreamingSettingsView body doesn't rebuild every time `currentTime` ticks.
-private struct CrossfadeRow: View {
-    @EnvironmentObject var player: AudioPlayer
-    var body: some View {
-        VStack(alignment: .leading) {
-            HStack {
-                Text("Crossfade")
-                Spacer()
-                Text(player.crossfadeDuration > 0
-                     ? String(format: "%.0f sec", player.crossfadeDuration)
-                     : "Off")
-                    .foregroundStyle(.secondary).font(.caption)
-            }
-            Slider(value: $player.crossfadeDuration, in: 0...12, step: 1)
-        }
-        .padding(.vertical, 4)
     }
 }
 

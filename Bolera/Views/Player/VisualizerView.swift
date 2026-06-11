@@ -23,16 +23,12 @@ struct VisualizerView: View {
                         let dt = max(0.001, min(0.1, now - state.lastT))
                         state.lastT = now
 
+                        // React to REAL audio levels only — no synthetic motion.
+                        // If the tap isn't delivering levels, settle to still.
                         let target: [Float] = {
                             if let real = player.activeAudioProcessor?.levels,
                                real.contains(where: { $0 > 0.01 }) {
                                 return real
-                            }
-                            if player.isPlaying {
-                                return (0..<8).map { i in
-                                    let phase = Double(i) * 0.7 + now * 2.0
-                                    return Float(max(0.05, 0.35 + 0.25 * sin(phase) + 0.2 * sin(phase * 1.7)))
-                                }
                             }
                             return Array(repeating: 0, count: 8)
                         }()
@@ -47,7 +43,6 @@ struct VisualizerView: View {
                         }
 
                         drawBars(gfx: gfx, size: size, levels: state.smoothed)
-                        drawWave(gfx: gfx, size: size, levels: state.smoothed, t: now)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -120,20 +115,4 @@ struct VisualizerView: View {
         }
     }
 
-    private func drawWave(gfx: GraphicsContext, size: CGSize, levels: [Float], t: TimeInterval) {
-        var path = Path()
-        let midY = size.height / 2
-        let steps = 120
-        let amp = size.height * 0.18
-        for s in 0...steps {
-            let x = size.width * CGFloat(s) / CGFloat(steps)
-            let i = min(levels.count - 1, s * levels.count / steps)
-            let level = CGFloat(levels[i])
-            let phase = Double(s) * 0.25 + t * 4
-            let y = midY + amp * (level * 0.6 + 0.4) * sin(phase)
-            if s == 0 { path.move(to: CGPoint(x: x, y: y)) }
-            else { path.addLine(to: CGPoint(x: x, y: y)) }
-        }
-        gfx.stroke(path, with: .color(.white.opacity(0.25)), lineWidth: 2)
-    }
 }

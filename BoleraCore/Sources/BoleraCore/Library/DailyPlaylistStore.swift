@@ -26,6 +26,17 @@ public struct DailyPlaylist: Codable, Identifiable, Hashable {
     }
 }
 
+/// Compact mix record synced via iCloud key-value store. Only the track IDs
+/// travel (not full BaseItems) so a rolling week of mixes stays well under the
+/// KVS size budget; the receiving device re-fetches the tracks from Jellyfin.
+struct MixSyncRecord: Codable {
+    let id: UUID
+    let name: String
+    let theme: String
+    let date: String
+    let trackIds: [String]
+}
+
 // MARK: - Store
 
 /// Generates a small set of themed playlists per day (deterministic by date),
@@ -37,9 +48,20 @@ public final class DailyPlaylistStore: ObservableObject {
     public static let shared = DailyPlaylistStore()
 
     @Published public private(set) var playlists: [DailyPlaylist] = []
+    /// Every mix generated (on any device) within the rolling 7-day window,
+    /// newest day first. Drives the "all mixes this week" list. `playlists`
+    /// stays as just today's mixes for the Home rail.
+    @Published public private(set) var recentMixes: [DailyPlaylist] = []
     @Published public private(set) var artworkByPlaylist: [UUID: PlatformImage] = [:]
     @Published public private(set) var lastError: String?
     @Published public private(set) var isGenerating: Bool = false
+
+    /// Rolling 7-day archive of mixes (full tracks), persisted locally.
+    private var archive: [DailyPlaylist] = []
+    private static let archiveKey = "bolera.dailyMixes.archive.v1"
+    private static let cloudKey = "bolera.dailyMixes.cloud.v1"
+    /// How many days of mixes to keep.
+    private static let retentionDays = 7
 
     // v10: mixes are now single-artist-anchored (cohesive) — invalidate the
     // old multi-seed "mashup" caches so they regenerate with the new logic.
@@ -58,11 +80,22 @@ public final class DailyPlaylistStore: ObservableObject {
 
     private init() {
         loadCachedPlaylists()
+        loadArchive()
         loadCachedArtwork()
         NotificationCenter.default.addObserver(
             forName: Notification.Name("boleraDidLogout"),
             object: nil, queue: .main
         ) { [weak self] _ in self?.clear() }
+        // Pull in mixes generated on another device the moment iCloud reports a
+        // change (resolves track IDs → BaseItems using the shared session).
+        CloudKVS.addObserver(self, selector: #selector(cloudMixesChanged))
+    }
+
+    @objc private nonisolated func cloudMixesChanged(_ note: Notification) {
+        Task { @MainActor [weak self] in
+            guard let self, let url = AuthManager.shared.serverURL else { return }
+            await self.syncFromCloud(client: JellyfinClient(baseURL: url, auth: AuthManager.shared))
+        }
     }
 
     /// Wipes cached playlists + artwork. Called when the user signs out
@@ -70,9 +103,14 @@ public final class DailyPlaylistStore: ObservableObject {
     /// server would otherwise still appear on Home.
     public func clear() {
         playlists = []
+        recentMixes = []
+        archive = []
         artworkByPlaylist = [:]
         lastError = nil
         UserDefaults.standard.removeObject(forKey: Self.cacheKey)
+        UserDefaults.standard.removeObject(forKey: Self.archiveKey)
+        CloudKVS.removeObject(forKey: Self.cloudKey)
+        CloudKVS.synchronize()
         try? FileManager.default.removeItem(at: artworkDir)
         try? FileManager.default.createDirectory(at: artworkDir, withIntermediateDirectories: true)
     }
@@ -86,11 +124,17 @@ public final class DailyPlaylistStore: ObservableObject {
                                 lastFm: LastFmService? = nil) async {
         let today = Self.dateString(Date())
         if !playlists.isEmpty, playlists.first?.date == today {
+            // Up to date locally — still reconcile the week's archive with iCloud
+            // so mixes from another device show up in the "this week" list.
+            await syncFromCloud(client: client)
             return
         }
         guard !generating else { return }
         generating = true
         defer { generating = false }
+        // Prefer mixes another device already generated today (keeps Mac + iOS
+        // showing the SAME mixes) before generating our own.
+        if await adoptTodayFromCloud(client: client) { return }
         await generate(client: client, auth: auth, lastFm: lastFm, today: today)
     }
 
@@ -113,7 +157,7 @@ public final class DailyPlaylistStore: ObservableObject {
     }
 
     public func tracks(forPlaylist id: UUID) -> [BaseItem]? {
-        playlists.first(where: { $0.id == id })?.tracks
+        (playlists.first(where: { $0.id == id }) ?? recentMixes.first(where: { $0.id == id }))?.tracks
     }
 
     // MARK: - Generation
@@ -187,10 +231,139 @@ public final class DailyPlaylistStore: ObservableObject {
         built = nameMixesByArtist(built)
         playlists = built
         persistPlaylists()
+        // Fold today's mixes into the rolling week archive + sync to iCloud.
+        addToArchive(built)
+        pushCloud()
         MixesWidgetExport.export(playlists, artwork: artworkByPlaylist)
 
         // Generate artwork (async, doesn't block UI).
-        Task { await renderAllArtwork(auth: auth, client: client) }
+        Task { await renderArtwork(for: playlists, auth: auth, client: client) }
+    }
+
+    // MARK: - Rolling week archive + iCloud sync
+
+    /// Today's date or the most recent mix date.
+    private func today() -> String { Self.dateString(Date()) }
+
+    private func cutoffDate() -> String {
+        let cutoff = Calendar(identifier: .gregorian)
+            .date(byAdding: .day, value: -(Self.retentionDays - 1), to: Date()) ?? Date()
+        return Self.dateString(cutoff)
+    }
+
+    /// Merge new mixes into the archive (de-duped by id), prune anything older
+    /// than the retention window, publish `recentMixes`, and persist locally.
+    private func addToArchive(_ new: [DailyPlaylist]) {
+        var byId: [UUID: DailyPlaylist] = [:]
+        for p in archive { byId[p.id] = p }
+        for p in new { byId[p.id] = p }
+        let cutoff = cutoffDate()
+        archive = byId.values
+            .filter { $0.date >= cutoff }
+            .sorted { $0.date != $1.date ? $0.date > $1.date : $0.name < $1.name }
+        recentMixes = archive
+        persistArchive()
+    }
+
+    private func persistArchive() {
+        if let data = try? JSONEncoder().encode(archive) {
+            UserDefaults.standard.set(data, forKey: Self.archiveKey)
+        }
+    }
+
+    private func loadArchive() {
+        if let data = UserDefaults.standard.data(forKey: Self.archiveKey),
+           let decoded = try? JSONDecoder().decode([DailyPlaylist].self, from: data) {
+            let cutoff = cutoffDate()
+            archive = decoded.filter { $0.date >= cutoff }
+                .sorted { $0.date != $1.date ? $0.date > $1.date : $0.name < $1.name }
+        } else {
+            // Seed the archive from any already-cached today's mixes.
+            archive = playlists
+        }
+        recentMixes = archive
+        for p in archive where artworkByPlaylist[p.id] == nil {
+            if let img = loadArtworkFromDisk(id: p.id) { artworkByPlaylist[p.id] = img }
+        }
+    }
+
+    private func cloudRecords() -> [MixSyncRecord] {
+        guard let data = CloudKVS.data(forKey: Self.cloudKey),
+              let recs = try? JSONDecoder().decode([MixSyncRecord].self, from: data) else { return [] }
+        return recs
+    }
+
+    /// Publish the archive (compact: track IDs only) to iCloud.
+    private func pushCloud() {
+        let cutoff = cutoffDate()
+        let records = archive.filter { $0.date >= cutoff }.map {
+            MixSyncRecord(id: $0.id, name: $0.name, theme: $0.theme,
+                          date: $0.date, trackIds: $0.tracks.map { $0.Id })
+        }
+        guard let data = try? JSONEncoder().encode(records) else { return }
+        CloudKVS.set(data, forKey: Self.cloudKey)
+        CloudKVS.synchronize()
+    }
+
+    /// If iCloud already holds today's mixes (made on another device), adopt
+    /// them (re-fetch tracks) so both platforms show identical mixes. Returns
+    /// true if it populated today's `playlists`.
+    private func adoptTodayFromCloud(client: JellyfinClient) async -> Bool {
+        let t = today()
+        let todays = cloudRecords().filter { $0.date == t }
+        guard !todays.isEmpty else { return false }
+        var built: [DailyPlaylist] = []
+        for r in todays {
+            let tracks = await resolveTracks(r.trackIds, client: client)
+            if tracks.count >= 4 {
+                built.append(DailyPlaylist(id: r.id, name: r.name, theme: r.theme, date: r.date, tracks: tracks))
+            }
+        }
+        guard !built.isEmpty else { return false }
+        playlists = built
+        persistPlaylists()
+        addToArchive(built)
+        MixesWidgetExport.export(playlists, artwork: artworkByPlaylist)
+        Task { await renderArtwork(for: built, auth: AuthManager.shared, client: client) }
+        return true
+    }
+
+    /// Reconcile the local archive with iCloud: pull any mix this device is
+    /// missing (within the window), re-fetch its tracks, and merge.
+    public func syncFromCloud(client: JellyfinClient) async {
+        let cutoff = cutoffDate()
+        let localIds = Set(archive.map { $0.id })
+        let missing = cloudRecords().filter { $0.date >= cutoff && !localIds.contains($0.id) }
+        guard !missing.isEmpty else { return }
+        var added: [DailyPlaylist] = []
+        for r in missing {
+            let tracks = await resolveTracks(r.trackIds, client: client)
+            if tracks.count >= 4 {
+                added.append(DailyPlaylist(id: r.id, name: r.name, theme: r.theme, date: r.date, tracks: tracks))
+            }
+        }
+        guard !added.isEmpty else { return }
+        addToArchive(added)
+        // If a remote device made today's mixes and we have none shown, surface them.
+        let t = today()
+        if playlists.first?.date != t {
+            let todays = archive.filter { $0.date == t }
+            if !todays.isEmpty { playlists = todays; persistPlaylists() }
+        }
+        Task { await renderArtwork(for: added, auth: AuthManager.shared, client: client) }
+    }
+
+    /// Re-fetch BaseItems for a list of track IDs (concurrently). Missing /
+    /// deleted tracks are silently dropped.
+    private func resolveTracks(_ ids: [String], client: JellyfinClient) async -> [BaseItem] {
+        await withTaskGroup(of: (Int, BaseItem?).self) { group in
+            for (i, id) in ids.enumerated() {
+                group.addTask { @MainActor in (i, try? await client.item(id)) }
+            }
+            var slots: [(Int, BaseItem)] = []
+            for await (i, item) in group { if let item { slots.append((i, item)) } }
+            return slots.sorted { $0.0 < $1.0 }.map { $0.1 }
+        }
     }
 
     /// Build ONE cohesive mix anchored on a single seed artist: the artist's
@@ -449,8 +622,9 @@ public final class DailyPlaylistStore: ObservableObject {
 
     // MARK: - Artwork
 
-    private func renderAllArtwork(auth: AuthManager, client: JellyfinClient) async {
-        for playlist in playlists {
+    private func renderArtwork(for mixes: [DailyPlaylist], auth: AuthManager, client: JellyfinClient) async {
+        for playlist in mixes {
+            if artworkByPlaylist[playlist.id] != nil { continue }
             if let existing = loadArtworkFromDisk(id: playlist.id) {
                 artworkByPlaylist[playlist.id] = existing
                 continue

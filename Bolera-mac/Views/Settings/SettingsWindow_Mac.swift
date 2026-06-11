@@ -8,6 +8,8 @@ struct SettingsWindow_Mac: View {
                 .tabItem { Label("General", systemImage: "gear") }
             PlaybackSettings_Mac()
                 .tabItem { Label("Playback", systemImage: "play.circle") }
+            NavigationSettings_Mac()
+                .tabItem { Label("Navigation", systemImage: "hand.draw") }
             LastFmSettings_Mac()
                 .tabItem { Label("Last.fm", systemImage: "waveform") }
             ProSettings_Mac()
@@ -104,6 +106,59 @@ private struct LastFmSettings_Mac: View {
     }
 }
 
+private struct NavigationSettings_Mac: View {
+    private struct Shortcut: Identifiable {
+        let id = UUID()
+        let icon: String
+        let action: String
+        let gesture: String
+        let key: String
+    }
+
+    private let rows: [Shortcut] = [
+        .init(icon: "chevron.left",  action: "Back",
+              gesture: "Swipe right with two fingers", key: "⌘ ["),
+        .init(icon: "chevron.right", action: "Forward",
+              gesture: "Swipe left with two fingers", key: "⌘ ]"),
+        .init(icon: "magnifyingglass", action: "Search",
+              gesture: "—", key: "⌘ F"),
+    ]
+
+    var body: some View {
+        Form {
+            Section("Trackpad & Keyboard") {
+                ForEach(rows) { row in
+                    HStack(spacing: 12) {
+                        Image(systemName: row.icon)
+                            .frame(width: 22)
+                            .foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.action).font(.body)
+                            Text(row.gesture)
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(row.key)
+                            .font(.callout.monospaced())
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            Section {
+                Text("Back and Forward move through pages you've visited — albums, artists, and the lists you open from the Home screen. You can also use the ◀ ▶ buttons in the toolbar.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("Trackpad swipes follow the macOS \u{201C}Swipe between pages\u{201D} setting (System Settings → Trackpad → More Gestures).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
 private struct GeneralSettings_Mac: View {
     @EnvironmentObject var auth: AuthManager
     @ObservedObject private var prefetcher = LibraryPrefetcher.shared
@@ -172,15 +227,6 @@ private struct PlaybackSettings_Mac: View {
 
     var body: some View {
         Form {
-            Section("Crossfade") {
-                Slider(value: $player.crossfadeDuration, in: 0...12, step: 1) {
-                    Text("Duration")
-                }
-                Text(player.crossfadeDuration > 0
-                     ? "\(Int(player.crossfadeDuration)) seconds"
-                     : "Off (hard cut)")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
             Section("Equalizer") {
                 Button("Open Equalizer Window…") {
                     openWindow(id: "eq")
@@ -403,8 +449,11 @@ private struct ProSettings_Mac: View {
 private struct AboutSettings_Mac: View {
     var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: "waveform.circle.fill")
-                .font(.system(size: 64)).foregroundStyle(.tint)
+            Image("BoleraGlyph")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 84, height: 84)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             Text("Bolera").font(.title).bold()
             Text("Version \(AuthManager.clientVersion)").foregroundStyle(.secondary)
             Text("Native Jellyfin music client").font(.caption).foregroundStyle(.tertiary)

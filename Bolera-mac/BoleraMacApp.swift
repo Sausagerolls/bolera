@@ -32,7 +32,8 @@ struct BoleraMacApp: App {
     var body: some Scene {
         WindowGroup("Bolera", id: "main") {
             RootView_Mac()
-                .frame(minWidth: 960, minHeight: 600)
+                .frame(minWidth: nav.microPlayer ? 200 : 960,
+                       minHeight: nav.microPlayer ? 200 : 600)
                 .environmentObject(auth)
                 .environmentObject(player)
                 .environmentObject(library)

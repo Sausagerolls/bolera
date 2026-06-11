@@ -1351,7 +1351,9 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 Task { @MainActor in await LastFmService.shared.scrobble(cur, startedAt: startedAt) }
             }
         }
-        maybeStartCrossfade()
+        // Crossfade removed (caused buffering/stutter problems) — tracks now
+        // always hard-cut via natural end → next(). maybeStartCrossfade() is no
+        // longer called; the dual-player path stays only for its plumbing.
         preloadNextIfNeeded()
         if Date().timeIntervalSince(lastProgressReport) > 10 {
             lastProgressReport = Date()

@@ -742,7 +742,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = BoleraWidgets/BoleraWidgetsMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 30;
+				CURRENT_PROJECT_VERSION = 31;
 				DEVELOPMENT_TEAM = J4UJD4Z33J;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BoleraWidgets/Info.plist;
@@ -769,7 +769,7 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BoleraWidgets/BoleraWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 31;
+				CURRENT_PROJECT_VERSION = 32;
 				DEVELOPMENT_TEAM = J4UJD4Z33J;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BoleraWidgets/Info.plist;
@@ -1034,7 +1034,7 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BoleraWidgets/BoleraWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 31;
+				CURRENT_PROJECT_VERSION = 32;
 				DEVELOPMENT_TEAM = J4UJD4Z33J;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BoleraWidgets/Info.plist;
@@ -1062,7 +1062,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = BoleraWidgets/BoleraWidgetsMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 30;
+				CURRENT_PROJECT_VERSION = 31;
 				DEVELOPMENT_TEAM = J4UJD4Z33J;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BoleraWidgets/Info.plist;

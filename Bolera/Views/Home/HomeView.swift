@@ -14,6 +14,7 @@ struct HomeView: View {
     @ObservedObject private var downloads = DownloadManager.shared
     @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
     @State private var showMoodMix = false
+    @State private var showMixesList = false
     @State private var recentsRefresh: Task<Void, Never>?
 
     var body: some View {
@@ -104,6 +105,9 @@ struct HomeView: View {
         .sheet(isPresented: $showMoodMix) {
             MoodMixSheet().environmentObject(auth)
         }
+        .sheet(isPresented: $showMixesList) {
+            DailyMixesListView().environmentObject(daily)
+        }
     }
 
     /// Entry point for the Apple Intelligence-driven mood mix. Renders as a
@@ -175,13 +179,25 @@ struct HomeView: View {
     private var dailySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text("Daily Mixes").font(.title2.bold())
+                Button {
+                    showMixesList = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Daily Mixes").font(.title2.bold())
+                        Image(systemName: "chevron.right")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
                 if daily.isGenerating {
                     ProgressView().controlSize(.small)
                     Text("Generating…")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Spacer()
             }
             .padding(.horizontal)
             if !daily.playlists.isEmpty {
@@ -441,6 +457,86 @@ struct DailyPlaylistTile: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Daily Mixes (rolling week)
+
+/// All daily mixes generated in the last week (synced across devices), grouped
+/// by day. Tap a mix to play it.
+struct DailyMixesListView: View {
+    @EnvironmentObject var daily: DailyPlaylistStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if daily.recentMixes.isEmpty {
+                    ContentUnavailableView("No Mixes Yet", systemImage: "square.stack",
+                        description: Text("Daily mixes from the last week appear here."))
+                } else {
+                    List {
+                        ForEach(grouped(), id: \.date) { group in
+                            Section(Self.sectionTitle(group.date)) {
+                                ForEach(group.mixes) { mix in
+                                    Button {
+                                        AudioPlayer.shared.playMix(items: mix.tracks,
+                                                                   extender: daily.extender(for: mix))
+                                        dismiss()
+                                    } label: { row(mix) }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Daily Mixes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+
+    private func row(_ mix: DailyPlaylist) -> some View {
+        HStack(spacing: 12) {
+            Group {
+                if let img = daily.artworkByPlaylist[mix.id] {
+                    Image(uiImage: img).resizable().scaledToFill()
+                } else {
+                    LinearGradient(colors: [Color.accentColor.opacity(0.4), .black.opacity(0.6)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                }
+            }
+            .frame(width: 52, height: 52)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(mix.name).font(.body).lineLimit(1)
+                Text("\(mix.tracks.count) tracks").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "play.circle.fill").foregroundStyle(.tint)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+
+    private func grouped() -> [(date: String, mixes: [DailyPlaylist])] {
+        var order: [String] = []
+        var byDate: [String: [DailyPlaylist]] = [:]
+        for m in daily.recentMixes {
+            if byDate[m.date] == nil { order.append(m.date) }
+            byDate[m.date, default: []].append(m)
+        }
+        return order.map { ($0, byDate[$0] ?? []) }
+    }
+
+    static func sectionTitle(_ date: String) -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = .current
+        guard let d = f.date(from: date) else { return date }
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "Today" }
+        if cal.isDateInYesterday(d) { return "Yesterday" }
+        let out = DateFormatter(); out.dateFormat = "EEEE, d MMM"; return out.string(from: d)
     }
 }
 

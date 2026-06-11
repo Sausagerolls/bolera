@@ -22,6 +22,8 @@ struct ContentPane_Mac: View {
                 AlbumDetail_Mac(album: album)
             case .artistDetail(let artist):
                 ArtistDetail_Mac(artist: artist)
+            case .playlistDetail(let pl):
+                PlaylistDetail_Mac(playlist: pl)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -39,6 +41,7 @@ private struct HomeContent_Mac: View {
     @EnvironmentObject var nav: MacNavCoordinator
     @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
     @State private var showMoodMix = false
+    @State private var showMixesList = false
     @ObservedObject private var connectivity = ConnectivityStore.shared
     @ObservedObject private var downloads = DownloadManager.shared
 
@@ -103,6 +106,9 @@ private struct HomeContent_Mac: View {
         .sheet(isPresented: $showMoodMix) {
             MoodMixSheet_Mac()
         }
+        .sheet(isPresented: $showMixesList) {
+            DailyMixesListView_Mac()
+        }
     }
 
     /// Gradient banner that mirrors the iOS Make-a-Mix card.
@@ -138,7 +144,17 @@ private struct HomeContent_Mac: View {
     private var dailySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text("Daily Mixes").font(.title3).bold()
+                Button { showMixesList = true } label: {
+                    HStack(spacing: 6) {
+                        Text("Daily Mixes").font(.title3).bold()
+                        Image(systemName: "chevron.right")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("See all mixes from this week")
                 if daily.isGenerating {
                     ProgressView().controlSize(.small)
                     Text("Generating…")
@@ -228,6 +244,83 @@ private struct HomeContent_Mac: View {
     }
 }
 
+// MARK: - Track row with artwork (mac)
+
+/// A track row showing album art, title/artist, album and length. Plays on
+/// click. Used by the home section lists and the Favourites tracks view so
+/// track lists show cover art (the old SwiftUI Table had none).
+struct MacTrackRow_Mac: View {
+    let track: BaseItem
+    let onPlay: () -> Void
+    @EnvironmentObject var auth: AuthManager
+    @State private var image: PlatformImage?
+
+    var body: some View {
+        Button(action: onPlay) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Color.white.opacity(0.06)
+                    if let image {
+                        Image(nsImage: image).resizable().scaledToFill()
+                    } else {
+                        Image(systemName: "music.note")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.Name).lineLimit(1)
+                    Text(track.primaryArtistName)
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                Text(track.Album ?? "")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .frame(maxWidth: 220, alignment: .trailing)
+                Text(track.durationSeconds.mmSS)
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    .frame(width: 46, alignment: .trailing)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .task(id: track.Id) { await loadArt() }
+    }
+
+    private func loadArt() async {
+        guard image == nil, let url = auth.serverURL else { return }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        let img = await ImageCache.shared.loadArtwork(
+            itemId: track.AlbumId ?? track.artworkItemId,
+            tag: track.AlbumPrimaryImageTag ?? track.artworkTag,
+            client: client, maxWidth: 120,
+            headers: ["Authorization": auth.authHeader()])
+        await MainActor.run { self.image = img }
+    }
+}
+
+/// Scrollable list of `MacTrackRow_Mac`. `onPlay(index)` starts playback at the
+/// tapped row against the whole list.
+struct MacTrackListView_Mac: View {
+    let tracks: [BaseItem]
+    let onPlay: (Int) -> Void
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(tracks.enumerated()), id: \.element.id) { idx, t in
+                    MacTrackRow_Mac(track: t) { onPlay(idx) }
+                    Divider().padding(.leading, 68)
+                }
+            }
+            Color.clear.frame(height: 20)
+        }
+    }
+}
+
 // MARK: - Home section → full list (mac)
 
 /// Full-list page for a home rail (Recent Tracks/Albums, Top Played, Recently
@@ -250,15 +343,7 @@ private struct HomeSectionList_Mac: View {
                 .padding(.bottom, 8)
 
             if section.isTrackList {
-                Table(items) {
-                    TableColumn("Name") { Text($0.Name) }
-                    TableColumn("Artist") { Text($0.primaryArtistName) }
-                    TableColumn("Album") { Text($0.Album ?? "") }
-                    TableColumn("Length") { item in Text(item.durationSeconds.mmSS) }
-                }
-                .contextMenu(forSelectionType: BaseItem.ID.self) { _ in
-                } primaryAction: { ids in
-                    guard let id = ids.first, let idx = items.firstIndex(where: { $0.Id == id }) else { return }
+                MacTrackListView_Mac(tracks: items) { idx in
                     player.play(items: items, startAt: idx)
                 }
             } else {
@@ -324,6 +409,89 @@ struct DailyPlaylistTile_Mac: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Daily Mixes (rolling week)
+
+/// All daily mixes from the last week (synced across devices), grouped by day.
+struct DailyMixesListView_Mac: View {
+    @ObservedObject private var daily = DailyPlaylistStore.shared
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Daily Mixes").font(.title2.bold())
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+            .padding()
+            Divider()
+            if daily.recentMixes.isEmpty {
+                ContentUnavailableView("No Mixes Yet", systemImage: "square.stack",
+                    description: Text("Daily mixes from the last week appear here."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(grouped(), id: \.date) { group in
+                        Section(Self.sectionTitle(group.date)) {
+                            ForEach(group.mixes) { mix in
+                                Button {
+                                    AudioPlayer.shared.playMix(items: mix.tracks,
+                                                               extender: daily.extender(for: mix))
+                                    dismiss()
+                                } label: { row(mix) }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(width: 440, height: 540)
+    }
+
+    private func row(_ mix: DailyPlaylist) -> some View {
+        HStack(spacing: 12) {
+            Group {
+                if let img = daily.artworkByPlaylist[mix.id] {
+                    Image(nsImage: img).resizable().scaledToFill()
+                } else {
+                    LinearGradient(colors: [Color.accentColor.opacity(0.4), .black.opacity(0.6)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                }
+            }
+            .frame(width: 48, height: 48)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(mix.name).lineLimit(1)
+                Text("\(mix.tracks.count) tracks").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "play.circle.fill").foregroundStyle(.tint)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+
+    private func grouped() -> [(date: String, mixes: [DailyPlaylist])] {
+        var order: [String] = []
+        var byDate: [String: [DailyPlaylist]] = [:]
+        for m in daily.recentMixes {
+            if byDate[m.date] == nil { order.append(m.date) }
+            byDate[m.date, default: []].append(m)
+        }
+        return order.map { ($0, byDate[$0] ?? []) }
+    }
+
+    static func sectionTitle(_ date: String) -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = .current
+        guard let d = f.date(from: date) else { return date }
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "Today" }
+        if cal.isDateInYesterday(d) { return "Yesterday" }
+        let out = DateFormatter(); out.dateFormat = "EEEE, d MMM"; return out.string(from: d)
     }
 }
 
@@ -694,6 +862,7 @@ private struct AlbumsContent_Mac: View {
 private struct PlaylistsContent_Mac: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var player: AudioPlayer
+    @EnvironmentObject var nav: MacNavCoordinator
     @State private var items: [BaseItem] = []
     @State private var pendingDelete: BaseItem?
 
@@ -704,6 +873,7 @@ private struct PlaylistsContent_Mac: View {
             LazyVGrid(columns: columns, spacing: 18) {
                 ForEach(items) { pl in
                     PlaylistTile_Mac(playlist: pl,
+                                     onOpen: { nav.openPlaylist(pl) },
                                      onPlay: { Task { await play(pl, shuffle: false) } },
                                      onShuffle: { Task { await play(pl, shuffle: true) } },
                                      onDelete: { pendingDelete = pl })
@@ -762,11 +932,122 @@ private struct PlaylistsContent_Mac: View {
     }
 }
 
+/// Playlist breakdown: cover + Play / Shuffle / Download controls, then the
+/// track list. Opened by tapping any playlist tile (instead of auto-playing).
+private struct PlaylistDetail_Mac: View {
+    let playlist: BaseItem
+    @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var player: AudioPlayer
+    @EnvironmentObject var downloads: DownloadManager
+    @State private var tracks: [BaseItem] = []
+    @State private var hero: PlatformImage?
+    @State private var loading = false
+    @State private var downloadingAll = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            if tracks.isEmpty && !loading {
+                ContentUnavailableView("Empty Playlist", systemImage: "music.note.list")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                MacTrackListView_Mac(tracks: tracks) { idx in
+                    player.play(items: tracks, startAt: idx)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay { if loading && tracks.isEmpty { ProgressView() } }
+        .task(id: playlist.Id) { await load() }
+    }
+
+    private var header: some View {
+        HStack(alignment: .bottom, spacing: 20) {
+            ZStack {
+                Color.gray.opacity(0.15)
+                if let hero {
+                    Image(nsImage: hero).resizable().scaledToFill()
+                } else {
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 44)).foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 160, height: 160)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Playlist").font(.caption).foregroundStyle(.secondary)
+                Text(playlist.Name).font(.largeTitle.bold()).lineLimit(2)
+                Text("\(tracks.count) track\(tracks.count == 1 ? "" : "s")")
+                    .font(.callout).foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    Button {
+                        player.shuffle = false
+                        player.play(items: tracks)
+                    } label: { Label("Play", systemImage: "play.fill").frame(minWidth: 70) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(tracks.isEmpty)
+                    Button {
+                        player.shuffle = true
+                        player.play(items: tracks)
+                    } label: { Label("Shuffle", systemImage: "shuffle") }
+                        .buttonStyle(.bordered)
+                        .disabled(tracks.isEmpty)
+                    Button {
+                        Task { await downloadAll() }
+                    } label: {
+                        Label(downloadingAll ? "Downloading…" : "Download",
+                              systemImage: "arrow.down.circle")
+                    }
+                        .buttonStyle(.bordered)
+                        .disabled(tracks.isEmpty || downloadingAll)
+                }
+                .controlSize(.large)
+                .padding(.top, 4)
+            }
+            Spacer()
+        }
+        .padding(28)
+    }
+
+    private func load() async {
+        guard let url = auth.serverURL else { return }
+        loading = true
+        defer { loading = false }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        if let raw = try? await client.playlistItems(playlist.Id) {
+            tracks = raw.filter { $0.type == "Audio" }
+        }
+        let headers = ["Authorization": auth.authHeader()]
+        if let tag = playlist.ImageTags?["Primary"],
+           let u = client.imageURL(for: playlist.Id, tag: tag, maxWidth: 400) {
+            hero = await ImageCache.shared.load(url: u, headers: headers)
+        } else if let first = tracks.first {
+            hero = await ImageCache.shared.loadArtwork(
+                itemId: first.AlbumId ?? first.artworkItemId,
+                tag: first.AlbumPrimaryImageTag ?? first.artworkTag,
+                client: client, maxWidth: 400, headers: headers)
+        }
+    }
+
+    private func downloadAll() async {
+        guard let url = auth.serverURL else { return }
+        downloadingAll = true
+        defer { downloadingAll = false }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        for t in tracks where !downloads.isDownloaded(t.Id) {
+            downloads.download(t, using: client)
+        }
+    }
+}
+
 /// Square thumbnail for a Jellyfin playlist. Tries the playlist's own
 /// primary image first; falls back to a 2x2 composite built from the
 /// first four track album covers.
 private struct PlaylistTile_Mac: View {
     let playlist: BaseItem
+    let onOpen: () -> Void
     let onPlay: () -> Void
     let onShuffle: () -> Void
     let onDelete: () -> Void
@@ -778,7 +1059,7 @@ private struct PlaylistTile_Mac: View {
     @State private var downloading = false
 
     var body: some View {
-        Button(action: onPlay) {
+        Button(action: onOpen) {
             VStack(alignment: .leading, spacing: 6) {
                 ZStack {
                     Color.gray.opacity(0.15)
@@ -983,7 +1264,7 @@ private struct SearchContent_Mac: View {
                     section(title: "Playlists", count: playlists.count) {
                         horizontalRail(playlists) { hint in
                             PlaylistResultTile(hint: hint,
-                                               onPlay: { Task { await playPlaylist(hint) } })
+                                               onPlay: { nav.openPlaylist(playlistStub(hint)) })
                                 .frame(width: 160)
                         }
                     }
@@ -1061,6 +1342,23 @@ private struct SearchContent_Mac: View {
             UserData: nil,
             ImageTags: tag.map { ["Primary": $0] },
             AlbumPrimaryImageTag: tag, BackdropImageTags: nil,
+            ChildCount: nil, SongCount: nil, AlbumCount: nil,
+            Overview: nil, Genres: nil
+        )
+    }
+
+    private func playlistStub(_ hint: SearchHint) -> BaseItem {
+        let id = hint.ItemId ?? hint.Id ?? ""
+        let tag = hint.PrimaryImageTag
+        return BaseItem(
+            Id: id, Name: hint.Name, type: "Playlist",
+            AlbumId: nil, Album: nil, AlbumArtist: nil,
+            AlbumArtists: nil, ArtistItems: nil, Artists: nil,
+            ParentId: nil, CollectionType: nil,
+            RunTimeTicks: nil, IndexNumber: nil, ParentIndexNumber: nil, ProductionYear: nil,
+            UserData: nil,
+            ImageTags: tag.map { ["Primary": $0] },
+            AlbumPrimaryImageTag: nil, BackdropImageTags: nil,
             ChildCount: nil, SongCount: nil, AlbumCount: nil,
             Overview: nil, Genres: nil
         )
@@ -1225,15 +1523,7 @@ private struct FavoritesContent_Mac: View {
                     favoritesEmpty("No individual songs favourited",
                                    icon: "music.note")
                 } else {
-                    Table(tracks) {
-                        TableColumn("Name") { Text($0.Name) }
-                        TableColumn("Artist") { Text($0.primaryArtistName) }
-                        TableColumn("Album") { Text($0.Album ?? "") }
-                        TableColumn("Length") { item in Text(item.durationSeconds.mmSS) }
-                    }
-                    .contextMenu(forSelectionType: BaseItem.ID.self) { _ in
-                    } primaryAction: { ids in
-                        guard let id = ids.first, let idx = tracks.firstIndex(where: { $0.Id == id }) else { return }
+                    MacTrackListView_Mac(tracks: tracks) { idx in
                         player.play(items: tracks, startAt: idx)
                     }
                 }

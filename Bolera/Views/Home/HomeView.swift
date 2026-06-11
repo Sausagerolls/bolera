@@ -40,22 +40,22 @@ struct HomeView: View {
                     }
 
                     if !library.recentlyPlayed.isEmpty {
-                        section(title: "Recent Tracks", items: library.recentlyPlayed)
+                        section(title: "Recent Tracks", items: library.recentlyPlayed, destination: .recentTracks)
                     }
                     if !library.recentlyPlayedAlbums.isEmpty {
-                        section(title: "Recent Albums", items: library.recentlyPlayedAlbums)
+                        section(title: "Recent Albums", items: library.recentlyPlayedAlbums, destination: .recentAlbums)
                     }
                     if !library.topPlayedTracks.isEmpty {
-                        section(title: "Top Played Tracks", items: library.topPlayedTracks)
+                        section(title: "Top Played Tracks", items: library.topPlayedTracks, destination: .topTracks)
                     }
                     if !library.recentlyAdded.isEmpty {
-                        section(title: "Recently Added", items: library.recentlyAdded)
+                        section(title: "Recently Added", items: library.recentlyAdded, destination: .recentlyAdded)
                     }
                     if !library.favoriteTracks.isEmpty {
-                        section(title: "Favorite Tracks", items: library.favoriteTracks)
+                        section(title: "Favorite Tracks", items: library.favoriteTracks, destination: .favoriteTracks)
                     }
                     if !library.favoriteAlbums.isEmpty {
-                        section(title: "Favorite Albums", items: library.favoriteAlbums)
+                        section(title: "Favorite Albums", items: library.favoriteAlbums, destination: .favoriteAlbums)
                     }
                 } else {
                     offlineContent
@@ -70,6 +70,17 @@ struct HomeView: View {
                 ArtistDetailView(artist: item)
             } else {
                 AlbumDetailView(album: item)
+            }
+        }
+        .navigationDestination(for: HomeSection.self) { sec in
+            switch sec {
+            case .favoriteTracks:
+                FavoritesView(initialMode: .tracks).navigationTitle("Favourites")
+            case .favoriteAlbums:
+                FavoritesView(initialMode: .albums).navigationTitle("Favourites")
+            default:
+                SectionListView(section: sec, initial: items(for: sec))
+                    .navigationTitle(sec.title)
             }
         }
         .refreshable { await reload(force: true) }
@@ -187,9 +198,27 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private func section(title: String, items: [BaseItem]) -> some View {
+    private func section(title: String, items: [BaseItem], destination: HomeSection? = nil) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.title2.bold()).padding(.horizontal)
+            Group {
+                if let destination {
+                    // Whole header taps through to the full list for this section.
+                    NavigationLink(value: destination) {
+                        HStack(spacing: 6) {
+                            Text(title).font(.title2.bold())
+                            Image(systemName: "chevron.right")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(title).font(.title2.bold())
+                }
+            }
+            .padding(.horizontal)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 14) {
                     ForEach(items) { item in
@@ -198,6 +227,19 @@ struct HomeView: View {
                 }
                 .padding(.horizontal)
             }
+        }
+    }
+
+    /// The already-loaded items for a section — passed to the full-list page for
+    /// instant display while it refreshes a fuller set from the server.
+    private func items(for section: HomeSection) -> [BaseItem] {
+        switch section {
+        case .recentTracks:   return library.recentlyPlayed
+        case .recentAlbums:   return library.recentlyPlayedAlbums
+        case .topTracks:      return library.topPlayedTracks
+        case .recentlyAdded:  return library.recentlyAdded
+        case .favoriteTracks: return library.favoriteTracks
+        case .favoriteAlbums: return library.favoriteAlbums
         }
     }
 
@@ -234,6 +276,137 @@ struct HomeView: View {
                 .lineLimit(1)
         }
         .frame(width: 150, alignment: .leading)
+    }
+}
+
+// MARK: - Home section → full list
+
+/// Identifies a home-screen section so its header can push a full-list page.
+/// Favourites route to the dedicated `FavoritesView` (the menu's Favourites
+/// page); the rest open a `SectionListView` that lists every item.
+enum HomeSection: String, Hashable {
+    case recentTracks, recentAlbums, topTracks, recentlyAdded, favoriteTracks, favoriteAlbums
+
+    var title: String {
+        switch self {
+        case .recentTracks:   return "Recent Tracks"
+        case .recentAlbums:   return "Recent Albums"
+        case .topTracks:      return "Top Played Tracks"
+        case .recentlyAdded:  return "Recently Added"
+        case .favoriteTracks: return "Favourite Tracks"
+        case .favoriteAlbums: return "Favourite Albums"
+        }
+    }
+
+    /// Track sections render a play-on-tap list; the rest a navigable grid.
+    var isTrackList: Bool {
+        self == .recentTracks || self == .topTracks
+    }
+}
+
+/// Full-list page for a home section. Shows the items loaded on Home instantly,
+/// then refreshes a fuller set from the server. Tracks play on tap (against the
+/// whole list); albums/artists push to detail via the stack's BaseItem route.
+struct SectionListView: View {
+    let section: HomeSection
+    let initial: [BaseItem]
+
+    @EnvironmentObject var auth: AuthManager
+    @State private var items: [BaseItem] = []
+    @State private var loading = false
+
+    private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+
+    var body: some View {
+        Group {
+            if section.isTrackList {
+                trackList
+            } else {
+                grid
+            }
+        }
+        .background(BoleraBackground().ignoresSafeArea())
+        .overlay { if loading && items.isEmpty { ProgressView() } }
+        .task {
+            if items.isEmpty { items = initial }
+            await load()
+        }
+        .refreshable { await load() }
+    }
+
+    private var trackList: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { idx, track in
+                    Button { AudioPlayer.shared.play(items: items, startAt: idx) } label: {
+                        HStack(spacing: 12) {
+                            JellyfinImage(itemId: track.AlbumId ?? track.Id, tag: track.AlbumPrimaryImageTag, maxWidth: 120, cornerRadius: 6)
+                                .frame(width: 44, height: 44)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(track.Name).lineLimit(1)
+                                Text(track.primaryArtistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal).padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .trackContextMenu(track)
+                    Divider().padding(.leading, 68)
+                }
+            }
+            Color.clear.frame(height: 100)
+        }
+    }
+
+    private var grid: some View {
+        ScrollView {
+            LazyVGrid(columns: columns, spacing: 18) {
+                ForEach(items) { item in
+                    NavigationLink(value: item) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Color.clear.aspectRatio(1, contentMode: .fit)
+                                .overlay(JellyfinImage(itemId: item.artworkItemId, tag: item.artworkTag, maxWidth: 400, cornerRadius: 10))
+                            Text(item.Name).font(.subheadline).lineLimit(1)
+                            Text(item.primaryArtistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        if item.type == "MusicAlbum" { IgnoreAlbumToggleButton(item: item) }
+                        else if item.type == "MusicArtist" { IgnoreArtistToggleButton(item: item) }
+                    }
+                }
+            }
+            .padding()
+            Color.clear.frame(height: 100)
+        }
+    }
+
+    private func load() async {
+        guard let url = auth.serverURL else { return }
+        if items.isEmpty { loading = true }
+        defer { loading = false }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        let vis = LibraryVisibilityStore.shared, ign = IgnoredTracksStore.shared
+        do {
+            switch section {
+            case .recentTracks:
+                items = ign.filter(vis.filter(try await client.recentlyPlayed(limit: 200)))
+            case .topTracks:
+                items = ign.filter(vis.filter(try await client.topPlayedTracks(limit: 200)))
+            case .recentAlbums:
+                items = vis.filter(try await client.recentlyPlayedAlbums(limit: 200))
+            case .recentlyAdded:
+                items = vis.filter(try await client.recentlyAdded(limit: 200))
+            case .favoriteTracks, .favoriteAlbums:
+                break   // handled by FavoritesView
+            }
+        } catch {
+            // Keep whatever's shown (the initial set).
+        }
     }
 }
 

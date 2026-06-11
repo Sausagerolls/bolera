@@ -7,6 +7,9 @@ import BoleraCore
 @MainActor
 final class MacNavCoordinator: ObservableObject {
     @Published var selection: SidebarSelection? = .home
+    /// When a home favourites rail header opens the Favourites page, the tab it
+    /// should land on ("Tracks"/"Albums"/"Artists"). Consumed once on appear.
+    @Published var pendingFavoritesMode: String?
     private var history: [SidebarSelection] = []
 
     var canGoBack: Bool { !history.isEmpty }
@@ -19,6 +22,19 @@ final class MacNavCoordinator: ObservableObject {
     func openArtist(_ item: BaseItem) {
         pushCurrent()
         selection = .artistDetail(item)
+    }
+
+    /// Drill into a home rail's full-list page (Recent/Top/Recently Added).
+    func openHomeSection(_ section: MacHomeSection) {
+        pushCurrent()
+        selection = .homeSection(section)
+    }
+
+    /// Open the Favourites page, optionally pre-selecting a tab.
+    func openFavorites(mode: String?) {
+        pushCurrent()
+        pendingFavoritesMode = mode
+        selection = .favorites
     }
 
     func goBack() {

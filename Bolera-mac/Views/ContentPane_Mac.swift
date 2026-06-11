@@ -15,6 +15,7 @@ struct ContentPane_Mac: View {
             case .artists:     ArtistsContent_Mac()
             case .albums:      AlbumsContent_Mac()
             case .playlists:   PlaylistsContent_Mac()
+            case .homeSection(let s): HomeSectionList_Mac(section: s)
             case .library(let id):
                 LibraryContent_Mac(libraryId: id)
             case .albumDetail(let album):
@@ -35,6 +36,7 @@ private struct HomeContent_Mac: View {
     @EnvironmentObject var library: LibraryStore
     @EnvironmentObject var daily: DailyPlaylistStore
     @EnvironmentObject var lastFm: LastFmService
+    @EnvironmentObject var nav: MacNavCoordinator
     @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
     @State private var showMoodMix = false
     @ObservedObject private var connectivity = ConnectivityStore.shared
@@ -51,22 +53,22 @@ private struct HomeContent_Mac: View {
                         dailySection
                     }
                     if !library.recentlyPlayed.isEmpty {
-                        section("Recent Tracks", items: library.recentlyPlayed)
+                        section("Recent Tracks", items: library.recentlyPlayed) { nav.openHomeSection(.recentTracks) }
                     }
                     if !library.recentlyPlayedAlbums.isEmpty {
-                        section("Recent Albums", items: library.recentlyPlayedAlbums)
+                        section("Recent Albums", items: library.recentlyPlayedAlbums) { nav.openHomeSection(.recentAlbums) }
                     }
                     if !library.topPlayedTracks.isEmpty {
-                        section("Top Played Tracks", items: library.topPlayedTracks)
+                        section("Top Played Tracks", items: library.topPlayedTracks) { nav.openHomeSection(.topTracks) }
                     }
                     if !library.recentlyAdded.isEmpty {
-                        section("Recently Added", items: library.recentlyAdded)
+                        section("Recently Added", items: library.recentlyAdded) { nav.openHomeSection(.recentlyAdded) }
                     }
                     if !library.favoriteTracks.isEmpty {
-                        section("Favorite Tracks", items: library.favoriteTracks)
+                        section("Favorite Tracks", items: library.favoriteTracks) { nav.openFavorites(mode: "Tracks") }
                     }
                     if !library.favoriteAlbums.isEmpty {
-                        section("Favorite Albums", items: library.favoriteAlbums)
+                        section("Favorite Albums", items: library.favoriteAlbums) { nav.openFavorites(mode: "Albums") }
                     }
                 } else {
                     offlineContent
@@ -197,9 +199,23 @@ private struct HomeContent_Mac: View {
         }
     }
 
-    private func section(_ title: String, items: [BaseItem]) -> some View {
+    private func section(_ title: String, items: [BaseItem], onOpen: (() -> Void)? = nil) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.title3).bold()
+            if let onOpen {
+                // Header taps through to the full list for this section.
+                Button(action: onOpen) {
+                    HStack(spacing: 6) {
+                        Text(title).font(.title3).bold()
+                        Image(systemName: "chevron.right")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text(title).font(.title3).bold()
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 14) {
                     ForEach(items) { item in
@@ -208,6 +224,73 @@ private struct HomeContent_Mac: View {
                     }
                 }
             }
+        }
+    }
+}
+
+// MARK: - Home section → full list (mac)
+
+/// Full-list page for a home rail (Recent Tracks/Albums, Top Played, Recently
+/// Added). Track sections render a sortable Table that plays on double-click;
+/// album sections a grid of album tiles.
+private struct HomeSectionList_Mac: View {
+    let section: MacHomeSection
+    @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var player: AudioPlayer
+    @State private var items: [BaseItem] = []
+
+    private let columns = [GridItem(.adaptive(minimum: 160), spacing: 16)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(section.title)
+                .font(.title2).bold()
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+
+            if section.isTrackList {
+                Table(items) {
+                    TableColumn("Name") { Text($0.Name) }
+                    TableColumn("Artist") { Text($0.primaryArtistName) }
+                    TableColumn("Album") { Text($0.Album ?? "") }
+                    TableColumn("Length") { item in Text(item.durationSeconds.mmSS) }
+                }
+                .contextMenu(forSelectionType: BaseItem.ID.self) { _ in
+                } primaryAction: { ids in
+                    guard let id = ids.first, let idx = items.firstIndex(where: { $0.Id == id }) else { return }
+                    player.play(items: items, startAt: idx)
+                }
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 18) {
+                        ForEach(items) { AlbumTile_Mac(item: $0) }
+                    }
+                    .padding(20)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task { await load() }
+    }
+
+    private func load() async {
+        guard let url = auth.serverURL else { return }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        let vis = LibraryVisibilityStore.shared, ign = IgnoredTracksStore.shared
+        do {
+            switch section {
+            case .recentTracks:
+                items = ign.filter(vis.filter(try await client.recentlyPlayed(limit: 200)))
+            case .topTracks:
+                items = ign.filter(vis.filter(try await client.topPlayedTracks(limit: 200)))
+            case .recentAlbums:
+                items = vis.filter(try await client.recentlyPlayedAlbums(limit: 200))
+            case .recentlyAdded:
+                items = vis.filter(try await client.recentlyAdded(limit: 200))
+            }
+        } catch {
+            // Keep whatever's shown.
         }
     }
 }
@@ -1112,6 +1195,7 @@ private struct PlaylistResultTile: View {
 private struct FavoritesContent_Mac: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var player: AudioPlayer
+    @EnvironmentObject var nav: MacNavCoordinator
 
     enum Mode: String, CaseIterable, Identifiable {
         case tracks = "Tracks", albums = "Albums", artists = "Artists"
@@ -1180,6 +1264,13 @@ private struct FavoritesContent_Mac: View {
             }
         }
         .task { await load() }
+        .onAppear {
+            // Honour a tab requested by a home favourites rail header.
+            if let m = nav.pendingFavoritesMode, let parsed = Mode(rawValue: m) {
+                mode = parsed
+                nav.pendingFavoritesMode = nil
+            }
+        }
     }
 
     @ViewBuilder

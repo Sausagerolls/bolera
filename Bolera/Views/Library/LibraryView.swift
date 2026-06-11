@@ -248,7 +248,11 @@ struct LetterScrubOverlay: View {
 struct FavoritesView: View {
     enum Mode: String, CaseIterable { case tracks = "Tracks", albums = "Albums", artists = "Artists" }
     @EnvironmentObject var auth: AuthManager
-    @State private var mode: Mode = .tracks
+    @State private var mode: Mode
+
+    init(initialMode: Mode = .tracks) {
+        _mode = State(initialValue: initialMode)
+    }
     @State private var tracks: [BaseItem] = []
     @State private var albums: [BaseItem] = []
     @State private var artists: [BaseItem] = []

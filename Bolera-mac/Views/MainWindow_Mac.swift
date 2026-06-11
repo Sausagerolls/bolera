@@ -1,6 +1,22 @@
 import SwiftUI
 import BoleraCore
 
+/// A home-screen rail whose header drills into a full-list page.
+/// (Favourites have their own dedicated sidebar page, so they're not here.)
+enum MacHomeSection: String, Hashable {
+    case recentTracks, recentAlbums, topTracks, recentlyAdded
+
+    var title: String {
+        switch self {
+        case .recentTracks:  return "Recent Tracks"
+        case .recentAlbums:  return "Recent Albums"
+        case .topTracks:     return "Top Played Tracks"
+        case .recentlyAdded: return "Recently Added"
+        }
+    }
+    var isTrackList: Bool { self == .recentTracks || self == .topTracks }
+}
+
 enum SidebarSelection: Hashable {
     case home
     case artists
@@ -9,6 +25,7 @@ enum SidebarSelection: Hashable {
     case downloads
     case favorites
     case search
+    case homeSection(MacHomeSection)  // full-list page for a home rail
     case library(String)  // Jellyfin library Id
     case albumDetail(BaseItem)
     case artistDetail(BaseItem)

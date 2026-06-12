@@ -319,7 +319,7 @@ private struct AISettingsView: View {
                                 if testing { ProgressView() }
                             }
                         }
-                        .disabled(testing || !ai.isConfigured)
+                        .disabled(testing || !ai.isConfigured || !ai.consentGranted)
 
                         if let r = testResult {
                             Text(r).font(.caption).foregroundStyle(testOK ? .green : .red)

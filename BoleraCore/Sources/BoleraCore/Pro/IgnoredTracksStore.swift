@@ -22,37 +22,86 @@ public final class IgnoredTracksStore: ObservableObject {
     private static let artistsKey     = "bolera.pro.ignoredArtists"
     private static let albumsKey      = "bolera.pro.ignoredAlbums"
     private static let labelsKey      = "bolera.pro.ignoredTrackLabels"
+    // v2 sync format: per-id last-writer-wins records (state + timestamp).
+    // The old arrays merged by UNION ONLY, so an un-ignore on one device was
+    // re-added by every other device's push and could never propagate. The
+    // records carry tombstones (i=false) with timestamps, merged newest-wins.
+    private static let recordsKeys    = ["bolera.pro.ignoredTracks.v2",
+                                         "bolera.pro.ignoredArtists.v2",
+                                         "bolera.pro.ignoredAlbums.v2"]
+
+    /// One per-id sync record: `i` = ignored?, `t` = when that was decided.
+    private struct Rec: Codable { var i: Bool; var t: TimeInterval }
+    /// Records per category: [0]=tracks, [1]=artists, [2]=albums.
+    private var records: [[String: Rec]] = [[:], [:], [:]]
 
     private init() {
-        let localT = UserDefaults.standard.stringArray(forKey: Self.idsKey) ?? []
-        let cloudT = CloudKVS.stringArray(forKey: Self.idsKey) ?? []
-        let localA = UserDefaults.standard.stringArray(forKey: Self.artistsKey) ?? []
-        let cloudA = CloudKVS.stringArray(forKey: Self.artistsKey) ?? []
-        let localB = UserDefaults.standard.stringArray(forKey: Self.albumsKey) ?? []
-        let cloudB = CloudKVS.stringArray(forKey: Self.albumsKey) ?? []
-        self.ignored = Set(localT).union(cloudT)
-        self.ignoredArtists = Set(localA).union(cloudA)
-        self.ignoredAlbums = Set(localB).union(cloudB)
+        self.ignored = []
+        self.ignoredArtists = []
+        self.ignoredAlbums = []
         let localLabels = UserDefaults.standard.dictionary(forKey: Self.labelsKey) as? [String: String] ?? [:]
         let cloudLabels = CloudKVS.dictionary(forKey: Self.labelsKey) ?? [:]
         self.labels = localLabels.merging(cloudLabels) { $1 }
+
+        // Load local v2 records; if absent (first run on this version), migrate
+        // the old local arrays as ignored-at-epoch records.
+        let legacyLocal = [UserDefaults.standard.stringArray(forKey: Self.idsKey) ?? [],
+                           UserDefaults.standard.stringArray(forKey: Self.artistsKey) ?? [],
+                           UserDefaults.standard.stringArray(forKey: Self.albumsKey) ?? []]
+        for c in 0..<3 {
+            if let data = UserDefaults.standard.data(forKey: Self.recordsKeys[c]),
+               let recs = try? JSONDecoder().decode([String: Rec].self, from: data) {
+                records[c] = recs
+            } else {
+                for id in legacyLocal[c] { records[c][id] = Rec(i: true, t: 0) }
+            }
+        }
+        mergeFromCloud()
+        rebuildSets()
         persistLocal()
-        CloudKVS.synchronize()
+        sync()
         CloudKVS.addObserver(self, selector: #selector(cloudChanged))
     }
 
     @objc private nonisolated func cloudChanged(_ note: Notification) {
         Task { @MainActor in
-            let t = CloudKVS.stringArray(forKey: Self.idsKey) ?? []
-            let a = CloudKVS.stringArray(forKey: Self.artistsKey) ?? []
-            let b = CloudKVS.stringArray(forKey: Self.albumsKey) ?? []
+            self.mergeFromCloud()
+            self.rebuildSets()
             let lbl = CloudKVS.dictionary(forKey: Self.labelsKey) ?? [:]
-            self.ignored.formUnion(t)
-            self.ignoredArtists.formUnion(a)
-            self.ignoredAlbums.formUnion(b)
             self.labels.merge(lbl) { $1 }
             self.persistLocal()
         }
+    }
+
+    /// Merge cloud state into local records: v2 records newest-wins per id,
+    /// plus legacy arrays (from devices on the old app version) as
+    /// ignored-at-epoch — they only ever ADD, and any v2 record outranks them.
+    private func mergeFromCloud() {
+        let legacyCloud = [CloudKVS.stringArray(forKey: Self.idsKey) ?? [],
+                           CloudKVS.stringArray(forKey: Self.artistsKey) ?? [],
+                           CloudKVS.stringArray(forKey: Self.albumsKey) ?? []]
+        for c in 0..<3 {
+            if let data = CloudKVS.data(forKey: Self.recordsKeys[c]),
+               let remote = try? JSONDecoder().decode([String: Rec].self, from: data) {
+                for (id, r) in remote where (records[c][id]?.t ?? -1) < r.t {
+                    records[c][id] = r
+                }
+            }
+            for id in legacyCloud[c] where records[c][id] == nil {
+                records[c][id] = Rec(i: true, t: 0)
+            }
+        }
+    }
+
+    private func rebuildSets() {
+        ignored = Set(records[0].filter { $0.value.i }.keys)
+        ignoredArtists = Set(records[1].filter { $0.value.i }.keys)
+        ignoredAlbums = Set(records[2].filter { $0.value.i }.keys)
+    }
+
+    /// Record a toggle in the LWW map (category: 0=track, 1=artist, 2=album).
+    private func setRecord(_ id: String, category: Int, ignored: Bool) {
+        records[category][id] = Rec(i: ignored, t: Date().timeIntervalSince1970)
     }
 
     // MARK: - Tracks
@@ -61,12 +110,14 @@ public final class IgnoredTracksStore: ObservableObject {
 
     public func ignore(_ item: BaseItem) {
         ignored.insert(item.Id)
+        setRecord(item.Id, category: 0, ignored: true)
         labels[item.Id] = "\(item.Name) — \(item.primaryArtistName)"
         persistLocal(); sync()
     }
 
     public func unignore(_ id: String) {
         ignored.remove(id)
+        setRecord(id, category: 0, ignored: false)
         labels.removeValue(forKey: id)
         persistLocal(); sync()
     }
@@ -77,12 +128,14 @@ public final class IgnoredTracksStore: ObservableObject {
 
     public func ignoreArtist(_ item: BaseItem) {
         ignoredArtists.insert(item.Id)
+        setRecord(item.Id, category: 1, ignored: true)
         labels[item.Id] = item.Name
         persistLocal(); sync()
     }
 
     public func unignoreArtist(_ id: String) {
         ignoredArtists.remove(id)
+        setRecord(id, category: 1, ignored: false)
         labels.removeValue(forKey: id)
         persistLocal(); sync()
     }
@@ -93,12 +146,14 @@ public final class IgnoredTracksStore: ObservableObject {
 
     public func ignoreAlbum(_ item: BaseItem) {
         ignoredAlbums.insert(item.Id)
+        setRecord(item.Id, category: 2, ignored: true)
         labels[item.Id] = "\(item.Name) — \(item.primaryArtistName)"
         persistLocal(); sync()
     }
 
     public func unignoreAlbum(_ id: String) {
         ignoredAlbums.remove(id)
+        setRecord(id, category: 2, ignored: false)
         labels.removeValue(forKey: id)
         persistLocal(); sync()
     }
@@ -133,9 +188,22 @@ public final class IgnoredTracksStore: ObservableObject {
         UserDefaults.standard.set(Array(ignoredArtists), forKey: Self.artistsKey)
         UserDefaults.standard.set(Array(ignoredAlbums), forKey: Self.albumsKey)
         UserDefaults.standard.set(labels, forKey: Self.labelsKey)
+        for c in 0..<3 {
+            if let data = try? JSONEncoder().encode(records[c]) {
+                UserDefaults.standard.set(data, forKey: Self.recordsKeys[c])
+            }
+        }
     }
 
     private func sync() {
+        // v2 records (the authoritative merge format)…
+        for c in 0..<3 {
+            if let data = try? JSONEncoder().encode(records[c]) {
+                CloudKVS.set(data, forKey: Self.recordsKeys[c])
+            }
+        }
+        // …plus the legacy arrays so devices on older app versions keep seeing
+        // additions (they can't process removals either way).
         CloudKVS.set(Array(ignored), forKey: Self.idsKey)
         CloudKVS.set(Array(ignoredArtists), forKey: Self.artistsKey)
         CloudKVS.set(Array(ignoredAlbums), forKey: Self.albumsKey)

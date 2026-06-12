@@ -60,6 +60,15 @@ struct ServerConnectionView: View {
                     }
                     .padding(.horizontal)
 
+                    if auth.sessionExpired {
+                        Label("Your session was signed out by the server — please sign in again.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+
                     if let error = error {
                         Text(error)
                             .foregroundStyle(.red)

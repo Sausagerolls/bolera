@@ -57,6 +57,76 @@ public final class LastFmService: ObservableObject {
 
     public var isAuthenticated: Bool { sessionKey != nil }
 
+    // MARK: - Offline scrobble queue
+
+    /// A scrobble that couldn't be submitted (dead zone, Last.fm outage).
+    /// Last.fm scrobbles carry their original timestamp, so late submission
+    /// is fully supported — they land at the right point in the history.
+    private struct PendingScrobble: Codable {
+        let artist: String, track: String, album: String
+        let duration: Int, timestamp: Int
+    }
+    private var pendingScrobbles: [PendingScrobble] = []
+    private var flushingScrobbles = false
+    private var reconnectCancellable: AnyCancellable?
+    private static let pendingURL: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return dir.appendingPathComponent("bolera.pendingScrobbles.json")
+    }()
+
+    private init() {
+        if let data = try? Data(contentsOf: Self.pendingURL),
+           let q = try? JSONDecoder().decode([PendingScrobble].self, from: data) {
+            pendingScrobbles = q
+        }
+        // Replay queued scrobbles the moment the network is usable again.
+        reconnectCancellable = ConnectivityStore.shared.didReconnect
+            .sink { [weak self] in Task { await self?.flushPendingScrobbles() } }
+        if !pendingScrobbles.isEmpty { Task { await flushPendingScrobbles() } }
+    }
+
+    private func persistPending() {
+        // Cap the queue so a long Last.fm outage can't grow it unboundedly.
+        if pendingScrobbles.count > 500 {
+            pendingScrobbles.removeFirst(pendingScrobbles.count - 500)
+        }
+        try? JSONEncoder().encode(pendingScrobbles).write(to: Self.pendingURL, options: .atomic)
+    }
+
+    /// Submit queued scrobbles in Last.fm batches (max 50 per request).
+    public func flushPendingScrobbles() async {
+        guard enabled, let session = sessionKey, hasAppCredentials,
+              !flushingScrobbles, !pendingScrobbles.isEmpty else { return }
+        flushingScrobbles = true
+        defer { flushingScrobbles = false }
+        while !pendingScrobbles.isEmpty {
+            let batch = Array(pendingScrobbles.prefix(50))
+            var params: [String: String] = [
+                "method": "track.scrobble",
+                "api_key": effectiveAPIKey,
+                "sk": session
+            ]
+            for (i, s) in batch.enumerated() {
+                params["artist[\(i)]"] = s.artist
+                params["track[\(i)]"] = s.track
+                params["album[\(i)]"] = s.album
+                params["timestamp[\(i)]"] = String(s.timestamp)
+                params["duration[\(i)]"] = String(s.duration)
+            }
+            params["api_sig"] = signature(params)
+            params["format"] = "json"
+            do {
+                _ = try await post(params) as VoidResponse
+                pendingScrobbles.removeFirst(batch.count)
+                persistPending()
+            } catch {
+                // Still offline / Last.fm down — keep the queue, retry later.
+                DebugLog.write("[LastFm] flush failed, \(pendingScrobbles.count) scrobbles still queued")
+                break
+            }
+        }
+    }
+
     public func signIn(username: String, password: String) async throws {
         guard hasAppCredentials else {
             throw LastFmError.message("Last.fm is not configured in this build. Contact the developer.")
@@ -117,7 +187,21 @@ public final class LastFmService: ObservableObject {
         ]
         params["api_sig"] = signature(params)
         params["format"] = "json"
-        _ = try? await post(params) as VoidResponse
+        do {
+            _ = try await post(params) as VoidResponse
+            // Success — opportunistically drain anything queued from earlier.
+            if !pendingScrobbles.isEmpty { await flushPendingScrobbles() }
+        } catch {
+            // Dead zone / Last.fm outage: queue it (scrobbles carry their own
+            // timestamp, so late submission lands correctly in the history).
+            // Previously this was `try?` — every failed scrobble was lost.
+            pendingScrobbles.append(PendingScrobble(
+                artist: item.primaryArtistName, track: item.Name,
+                album: item.Album ?? "", duration: Int(item.durationSeconds),
+                timestamp: Int(startedAt.timeIntervalSince1970)))
+            persistPending()
+            DebugLog.write("[LastFm] scrobble failed — queued (\(pendingScrobbles.count) pending)")
+        }
     }
 
     // MARK: - Similar artists (artist.getSimilar — read-only, no session needed)

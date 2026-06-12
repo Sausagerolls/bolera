@@ -135,6 +135,27 @@ public struct JellyfinClient {
         return req
     }
 
+    /// Consecutive 401s from AUTHENTICATED requests. Jellyfin tokens don't
+    /// expire client-side but can be revoked server-side (admin, password
+    /// change) — without this, every call just fails forever with no path back
+    /// to the login screen. Three in a row (not one — a proxy hiccup or a
+    /// single race shouldn't log anyone out) marks the session expired.
+    private static var consecutive401s = 0
+    private static let expiredThreshold = 3
+
+    private func track401(_ statusCode: Int) {
+        if statusCode == 401 {
+            Self.consecutive401s += 1
+            if Self.consecutive401s >= Self.expiredThreshold {
+                Self.consecutive401s = 0
+                DebugLog.write("[JellyfinClient] \(Self.expiredThreshold) consecutive 401s — session revoked, signing out")
+                Task { @MainActor in AuthManager.shared.handleSessionExpired() }
+            }
+        } else {
+            Self.consecutive401s = 0
+        }
+    }
+
     private func send<T: Decodable>(_ req: URLRequest, as type: T.Type) async throws -> T {
         let data: Data
         let response: URLResponse
@@ -145,6 +166,7 @@ public struct JellyfinClient {
             throw error
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        track401(http.statusCode)
         guard (200..<300).contains(http.statusCode) else {
             print("[JellyfinClient] HTTP \(http.statusCode) for \(req.url?.absoluteString ?? "?")")
             throw APIError.badResponse(http.statusCode)
@@ -161,9 +183,22 @@ public struct JellyfinClient {
 
     @discardableResult
     private func sendVoid(_ req: URLRequest) async throws -> Data {
-        let (data, response) = try await Self.apiSession.data(for: req)
+        let data: Data
+        let response: URLResponse
+        do {
+            // Report transport failures/successes like send() — mutations
+            // (favourites, playback reports, playlist edits) previously never
+            // fed ConnectivityStore, so a dead link discovered via a mutation
+            // didn't flip the app offline or start the reconnect probe.
+            (data, response) = try await Self.apiSession.data(for: req)
+        } catch {
+            await ConnectivityStore.shared.noteFailure(error)
+            throw error
+        }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        track401(http.statusCode)
         guard (200..<300).contains(http.statusCode) else { throw APIError.badResponse(http.statusCode) }
+        await ConnectivityStore.shared.noteSuccess()
         return data
     }
 

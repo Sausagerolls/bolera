@@ -54,6 +54,14 @@ struct ServerConnectionView_Mac: View {
                 }
                 .frame(maxWidth: 380)
 
+                if auth.sessionExpired {
+                    Label("Your session was signed out by the server — please sign in again.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 380)
+                }
+
                 if let err = error {
                     Text(err).font(.callout).foregroundStyle(.red)
                         .multilineTextAlignment(.center)

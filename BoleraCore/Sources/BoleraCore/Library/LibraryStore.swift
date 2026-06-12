@@ -13,15 +13,26 @@ import AppKit
 /// to idevicesyslog, so a file is the only reliable capture.
 public enum DebugLog {
     private static let q = DispatchQueue(label: "bolera.debuglog")
+    /// Cap the on-disk log; when exceeded the file is truncated (start fresh).
+    /// Unbounded growth both eats storage and lengthens the exposure window
+    /// for anything sensitive that slips into a log line.
+    private static let maxBytes: UInt64 = 5 * 1024 * 1024
     public static let url: URL = {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return dir.appendingPathComponent("bolera-debug.log")
     }()
     public static func write(_ msg: String) {
-        NSLog("%@", msg)
+        // Never persist credentials: strip any api_key/token query value that a
+        // caller forgot to redact before logging.
+        let safe = redact(msg)
+        NSLog("%@", safe)
         q.async {
-            let line = "\(Date()) \(msg)\n"
+            let line = "\(Date()) \(safe)\n"
             guard let data = line.data(using: .utf8) else { return }
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+               let size = attrs[.size] as? UInt64, size > maxBytes {
+                try? FileManager.default.removeItem(at: url)
+            }
             if let h = try? FileHandle(forWritingTo: url) {
                 defer { try? h.close() }
                 h.seekToEndOfFile()
@@ -30,6 +41,18 @@ public enum DebugLog {
                 try? data.write(to: url)
             }
         }
+    }
+
+    /// Masks credential-bearing query parameters in a URL for safe logging.
+    public static func redacted(_ url: URL) -> String { redact(url.absoluteString) }
+
+    private static func redact(_ s: String) -> String {
+        guard s.contains("api_key") || s.contains("Token") else { return s }
+        return s
+            .replacingOccurrences(of: #"api_key=[^&\s"]+"#, with: "api_key=***",
+                                  options: .regularExpression)
+            .replacingOccurrences(of: #"Token=\"[^\"]+\""#, with: "Token=\"***\"",
+                                  options: .regularExpression)
     }
 }
 

@@ -66,16 +66,18 @@ struct LastFmSettingsView: View {
     private func signIn() {
         working = true
         error = nil
+        // Hand the password to the task and clear the field immediately —
+        // don't keep the plaintext sitting in @State for the request's
+        // lifetime (or forever, if the task errors before the cleanup ran).
+        let pwd = password
+        password = ""
         Task {
             do {
-                try await lastFm.signIn(username: username, password: password)
+                try await lastFm.signIn(username: username, password: pwd)
             } catch {
                 await MainActor.run { self.error = error.localizedDescription }
             }
-            await MainActor.run {
-                self.working = false
-                self.password = ""
-            }
+            await MainActor.run { self.working = false }
         }
     }
 }

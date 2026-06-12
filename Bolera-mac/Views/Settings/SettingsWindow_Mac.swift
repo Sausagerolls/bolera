@@ -265,7 +265,7 @@ private struct PlaybackSettings_Mac: View {
                         }
                         HStack {
                             Button("Test Connection") { runTest() }
-                                .disabled(testing || !ai.isConfigured)
+                                .disabled(testing || !ai.isConfigured || !ai.consentGranted)
                             if testing { ProgressView().controlSize(.small) }
                         }
                         if let r = testResult {

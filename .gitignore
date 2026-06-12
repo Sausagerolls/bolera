@@ -64,3 +64,4 @@ Tools/
 
 # Marketing site — deployed separately, not part of the app
 marketing/
+AUDIT-*.md

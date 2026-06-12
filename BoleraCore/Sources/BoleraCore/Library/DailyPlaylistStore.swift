@@ -294,13 +294,20 @@ public final class DailyPlaylistStore: ObservableObject {
     }
 
     /// Publish the archive (compact: track IDs only) to iCloud.
+    /// MERGES the existing cloud records first — KVS is last-write-wins on the
+    /// whole key, so pushing only the local archive could erase mixes another
+    /// device published moments earlier (they'd then vanish for every device).
     private func pushCloud() {
         let cutoff = cutoffDate()
-        let records = archive.filter { $0.date >= cutoff }.map {
-            MixSyncRecord(id: $0.id, name: $0.name, theme: $0.theme,
-                          date: $0.date, trackIds: $0.tracks.map { $0.Id })
+        var byId: [UUID: MixSyncRecord] = [:]
+        // Existing cloud records first (preserved unless we hold the same id)…
+        for r in cloudRecords() where r.date >= cutoff { byId[r.id] = r }
+        // …then the local archive (same id = same mix, so overwrite is fine).
+        for p in archive where p.date >= cutoff {
+            byId[p.id] = MixSyncRecord(id: p.id, name: p.name, theme: p.theme,
+                                       date: p.date, trackIds: p.tracks.map { $0.Id })
         }
-        guard let data = try? JSONEncoder().encode(records) else { return }
+        guard let data = try? JSONEncoder().encode(Array(byId.values)) else { return }
         CloudKVS.set(data, forKey: Self.cloudKey)
         CloudKVS.synchronize()
     }

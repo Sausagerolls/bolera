@@ -97,6 +97,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private var startGateObserver: NSKeyValueObservation?
     private var startGateDeadline: DispatchWorkItem?
     private var rateObserver: NSKeyValueObservation?
+    private var rateObserverB: NSKeyValueObservation?
 
     private var crossfadeTimer: Timer?
     private var crossfadeStartedFor: BaseItem?
@@ -729,7 +730,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             } else if let client = client {
                 url = client.playbackStreamURL(for: item.Id, maxBitrateOverride: recoveryBitrateCap)
             } else { return }
-            DebugLog.write("[AudioPlayer] load '\(item.Name)' src=\(url.isFileURL ? "local" : "stream") recovery=\(isRecovery) \(url.absoluteString)")
+            DebugLog.write("[AudioPlayer] load '\(item.Name)' src=\(url.isFileURL ? "local" : "stream") recovery=\(isRecovery) \(DebugLog.redacted(url))")
             asset = AVURLAsset(url: url)
         }
         let playerItem = AVPlayerItem(asset: asset)
@@ -1298,10 +1299,9 @@ public final class AudioPlayer: NSObject, ObservableObject {
         timeObserver = playerA.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] _ in
             self?.tick()
         }
-        // Second observer on player B so we still get updates after a crossfade swap.
-        _ = playerB.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] _ in
-            self?.tick()
-        }
+        // (A second observer used to sit on playerB for the crossfade swap;
+        // with crossfade removed playerB is never the active player, and the
+        // duplicate just fired tick() twice per interval. Removed.)
     }
 
     private func tick() {
@@ -1376,7 +1376,11 @@ public final class AudioPlayer: NSObject, ObservableObject {
         rateObserver = playerA.observe(\.timeControlStatus, options: [.new]) { [weak self] p, _ in
             self?.handleTimeControl(p, isA: true)
         }
-        _ = playerB.observe(\.timeControlStatus, options: [.new]) { [weak self] p, _ in
+        // RETAIN this observation — the old `_ = playerB.observe(...)` discarded
+        // the NSKeyValueObservation, which invalidates immediately, so playerB
+        // state changes never fired handleTimeControl at all (silent recovery
+        // hole if playerB ever becomes the active player again).
+        rateObserverB = playerB.observe(\.timeControlStatus, options: [.new]) { [weak self] p, _ in
             self?.handleTimeControl(p, isA: false)
         }
     }

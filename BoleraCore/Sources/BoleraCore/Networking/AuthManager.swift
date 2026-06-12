@@ -32,6 +32,9 @@ public final class AuthManager: ObservableObject {
     @Published public private(set) var userId: String?
     @Published public private(set) var userName: String?
     @Published public private(set) var accessToken: String?
+    /// True after a soft sign-out caused by the server revoking the token —
+    /// the connect screen uses it to explain WHY the user was signed out.
+    @Published public private(set) var sessionExpired: Bool = false
 
     public init() {
         load()
@@ -82,8 +85,25 @@ public final class AuthManager: ObservableObject {
             Keychain.set(response.AccessToken, for: "token")
             Keychain.set(response.User.Id, for: "userId")
             Keychain.set(response.User.Name, for: "userName")
+            self.sessionExpired = false
             self.isAuthenticated = true
         }
+    }
+
+    /// Soft sign-out for a server-side token revocation (admin revoked the
+    /// session, password changed). Unlike `logout()` this keeps the library
+    /// caches, Last.fm link, queue and onboarding flags — the user only needs
+    /// to sign in again, not rebuild everything. Routes to the connect screen
+    /// via `isAuthenticated = false`; `sessionExpired` lets it explain why.
+    @MainActor
+    public func handleSessionExpired() {
+        guard isAuthenticated else { return }
+        DebugLog.write("[AuthManager] session expired (server revoked token) — soft sign-out")
+        AudioPlayer.shared.stop()
+        Keychain.delete("token")
+        accessToken = nil
+        isAuthenticated = false
+        sessionExpired = true
     }
 
     public func logout() {

@@ -183,10 +183,13 @@ public final class CustomAIStore: ObservableObject {
                                   apiKey: apiKey, requiresKey: preset.requiresKey)
     }
 
-    /// Configuration-only round trip for the "Test" button — bypasses the
-    /// consent gate (the user is actively setting it up and pressed Test).
+    /// Configuration round trip for the "Test" button. Requires the same
+    /// explicit consent as `analyze()` — even the canned test prompt is data
+    /// sent to the endpoint, and the settings footer promises nothing is sent
+    /// "until you allow it". (The UI surfaces the consent sheet first.)
     public func test(prompt: String = "happy summer drive with the windows down") async throws -> RemoteMoodAnalysis {
         guard isConfigured else { throw CustomAIError.notConfigured }
+        guard consentGranted else { throw CustomAIError.consentRequired }
         return try await Self.run(prompt: prompt, baseURL: baseURL, model: model,
                                   apiKey: apiKey, requiresKey: preset.requiresKey)
     }
@@ -247,12 +250,19 @@ public final class CustomAIStore: ObservableObject {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
             throw CustomAIError.parse("invalid JSON")
         }
-        let tags = (obj["tags"] as? [String])?
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .filter { !$0.isEmpty } ?? []
+        // Clamp everything from the (untrusted) endpoint: cap counts + lengths
+        // and validate the decade against the documented set, so a malicious or
+        // misbehaving server can't inject megabyte strings into the UI/queries.
+        let tags = ((obj["tags"] as? [String]) ?? [])
+            .prefix(8)
+            .map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().prefix(40)) }
+            .filter { !$0.isEmpty }
         guard !tags.isEmpty else { throw CustomAIError.emptyResult }
-        let decade = (obj["decade"] as? String) ?? ""
-        let mood = ((obj["mood"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return RemoteMoodAnalysis(tags: tags, decade: decade, mood: mood.isEmpty ? "Mood Mix" : mood)
+        let allowedDecades: Set<String> = ["70s", "80s", "90s", "00s", "10s", "20s", ""]
+        let rawDecade = (obj["decade"] as? String) ?? ""
+        let decade = allowedDecades.contains(rawDecade) ? rawDecade : ""
+        let mood = String(((obj["mood"] as? String) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        return RemoteMoodAnalysis(tags: Array(tags), decade: decade, mood: mood.isEmpty ? "Mood Mix" : mood)
     }
 }

@@ -697,40 +697,64 @@ struct TagsView: View {
     }
 }
 
-/// Artists + albums for a genre or server tag.
+/// Artists / Albums browser for a genre or server tag, with a sticky radio:
+/// "Start Radio" plays random tracks from this genre/tag, and the endless-mix
+/// extender keeps drawing from the SAME genre/tag as the queue runs down.
 struct FilterDetailView: View {
     let filter: LibraryView.Filter
     @EnvironmentObject var auth: AuthManager
+    enum Mode: String, CaseIterable { case artists = "Artists", albums = "Albums" }
+    @State private var mode: Mode = .albums
     @State private var artists: [BaseItem] = []
     @State private var albums: [BaseItem] = []
     @State private var loading = false
+    @State private var startingRadio = false
 
     private let albumColumns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+    private let artistColumns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if !artists.isEmpty {
-                    Text("Artists").font(.title3.bold()).padding(.horizontal)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 14) {
-                            ForEach(artists) { artist in
-                                NavigationLink(value: artist) {
-                                    VStack(spacing: 6) {
-                                        JellyfinImage(itemId: artist.Id, tag: artist.ImageTags?["Primary"], maxWidth: 300, cornerRadius: 200)
-                                            .frame(width: 110, height: 110)
-                                        Text(artist.Name).font(.caption).lineLimit(1)
-                                            .frame(width: 110)
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
+        VStack(spacing: 0) {
+            Button {
+                startRadio()
+            } label: {
+                HStack {
+                    if startingRadio { ProgressView().tint(.white) }
+                    else { Image(systemName: "antenna.radiowaves.left.and.right") }
+                    Text("Start \(filter.name) Radio")
                 }
-                if !albums.isEmpty {
-                    Text("Albums").font(.title3.bold()).padding(.horizontal)
+                .frame(maxWidth: .infinity).padding(.vertical, 10)
+                .background(Color.accentColor).foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .disabled(startingRadio)
+            .padding(.horizontal)
+            .padding(.bottom, 10)
+
+            Picker("", selection: $mode) {
+                ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+
+            ScrollView {
+                switch mode {
+                case .artists:
+                    LazyVGrid(columns: artistColumns, spacing: 18) {
+                        ForEach(artists) { artist in
+                            NavigationLink(value: artist) {
+                                VStack(spacing: 6) {
+                                    Color.clear.aspectRatio(1, contentMode: .fit)
+                                        .overlay(JellyfinImage(itemId: artist.Id, tag: artist.ImageTags?["Primary"], maxWidth: 300, cornerRadius: 200))
+                                    Text(artist.Name).font(.caption).lineLimit(1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal)
+                case .albums:
                     LazyVGrid(columns: albumColumns, spacing: 18) {
                         ForEach(albums) { album in
                             NavigationLink(value: album) {
@@ -749,16 +773,16 @@ struct FilterDetailView: View {
                 }
                 Color.clear.frame(height: 100)
             }
-            .padding(.top, 8)
-        }
-        .overlay {
-            if loading && artists.isEmpty && albums.isEmpty { ProgressView() }
-            else if artists.isEmpty && albums.isEmpty && !loading {
-                ContentUnavailableView("Nothing Here",
-                    systemImage: filter.kind == .genre ? "guitars" : "tag",
-                    description: Text("No artists or albums match this \(filter.kind.rawValue.lowercased())."))
+            .overlay {
+                if loading && artists.isEmpty && albums.isEmpty { ProgressView() }
+                else if !loading && (mode == .artists ? artists.isEmpty : albums.isEmpty) {
+                    ContentUnavailableView("No \(mode.rawValue)",
+                        systemImage: filter.kind == .genre ? "guitars" : "tag",
+                        description: Text("No \(mode.rawValue.lowercased()) match this \(filter.kind.rawValue.lowercased())."))
+                }
             }
         }
+        .padding(.top, 8)
         .task(id: filter) { await load() }
         .refreshable { await load() }
     }
@@ -785,6 +809,17 @@ struct FilterDetailView: View {
         let vis = LibraryVisibilityStore.shared
         artists = vis.filter(fetchedArtists)
         albums = vis.filter(fetchedAlbums)
+    }
+
+    private func startRadio() {
+        guard let url = auth.serverURL else { return }
+        startingRadio = true
+        Task {
+            defer { startingRadio = false }
+            await GenreTagRadio.start(filter.kind == .genre ? .genre : .tag,
+                                      name: filter.name,
+                                      client: JellyfinClient(baseURL: url, auth: auth))
+        }
     }
 }
 

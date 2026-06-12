@@ -917,52 +917,90 @@ private struct TagsContent_Mac: View {
     }
 }
 
-/// Artists + albums for a genre or server tag.
+/// Artists / Albums browser for a genre or server tag, plus a sticky radio:
+/// "Start Radio" plays random tracks from this genre/tag and keeps extending
+/// the queue from the SAME genre/tag (the filter is captured by the extender).
 private struct FilterDetail_Mac: View {
     let filter: MacLibraryFilter
     @EnvironmentObject var auth: AuthManager
+    enum Mode: String, CaseIterable { case artists = "Artists", albums = "Albums" }
+    @State private var mode: Mode = .albums
     @State private var artists: [BaseItem] = []
     @State private var albums: [BaseItem] = []
     @State private var loading = false
+    @State private var startingRadio = false
 
     private let artistColumns = [GridItem(.adaptive(minimum: 180), spacing: 16)]
     private let albumColumns = [GridItem(.adaptive(minimum: 160), spacing: 16)]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(spacing: 8) {
-                    Image(systemName: filter.kind == .genre ? "guitars" : "tag")
-                        .foregroundStyle(.tint)
-                    Text(filter.name).font(.title2.bold())
-                    Text(filter.kind.rawValue).font(.caption)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .foregroundStyle(.secondary)
-                }
-                if !artists.isEmpty {
-                    Text("Artists").font(.title3).bold()
-                    LazyVGrid(columns: artistColumns, spacing: 18) {
-                        ForEach(artists) { a in ArtistTile_Mac(item: a) }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: filter.kind == .genre ? "guitars" : "tag")
+                    .foregroundStyle(.tint)
+                Text(filter.name).font(.title2.bold())
+                Text(filter.kind.rawValue).font(.caption)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .foregroundStyle(.secondary)
+                Button {
+                    startRadio()
+                } label: {
+                    if startingRadio {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Start Radio", systemImage: "antenna.radiowaves.left.and.right")
                     }
                 }
-                if !albums.isEmpty {
-                    Text("Albums").font(.title3).bold()
-                    LazyVGrid(columns: albumColumns, spacing: 18) {
-                        ForEach(albums) { al in AlbumTile_Mac(item: al) }
-                    }
+                .buttonStyle(.borderedProminent)
+                .disabled(startingRadio)
+                .help("Endless mix drawn only from this \(filter.kind.rawValue.lowercased())")
+                Spacer()
+                Picker("", selection: $mode) {
+                    ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
-                if artists.isEmpty && albums.isEmpty && !loading {
-                    ContentUnavailableView("Nothing Here",
-                        systemImage: filter.kind == .genre ? "guitars" : "tag",
-                        description: Text("No artists or albums match this \(filter.kind.rawValue.lowercased())."))
-                        .frame(maxWidth: .infinity, minHeight: 300)
-                }
+                .pickerStyle(.segmented)
+                .frame(width: 200)
             }
             .padding(20)
+
+            ScrollView {
+                Group {
+                    switch mode {
+                    case .artists:
+                        LazyVGrid(columns: artistColumns, spacing: 18) {
+                            ForEach(artists) { a in ArtistTile_Mac(item: a) }
+                        }
+                    case .albums:
+                        LazyVGrid(columns: albumColumns, spacing: 18) {
+                            ForEach(albums) { al in AlbumTile_Mac(item: al) }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+            }
+            .overlay {
+                if loading && artists.isEmpty && albums.isEmpty { ProgressView() }
+                else if !loading && (mode == .artists ? artists.isEmpty : albums.isEmpty) {
+                    ContentUnavailableView("No \(mode.rawValue)",
+                        systemImage: filter.kind == .genre ? "guitars" : "tag",
+                        description: Text("No \(mode.rawValue.lowercased()) match this \(filter.kind.rawValue.lowercased())."))
+                }
+            }
         }
-        .overlay { if loading && artists.isEmpty && albums.isEmpty { ProgressView() } }
         .task(id: filter) { await load() }
+    }
+
+    private func startRadio() {
+        guard let url = auth.serverURL else { return }
+        startingRadio = true
+        Task {
+            defer { startingRadio = false }
+            await GenreTagRadio.start(filter.kind == .genre ? .genre : .tag,
+                                      name: filter.name,
+                                      client: JellyfinClient(baseURL: url, auth: auth))
+        }
     }
 
     private func load() async {

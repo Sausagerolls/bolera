@@ -538,6 +538,21 @@ public struct JellyfinClient {
         return (res.Tags ?? []).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
+    /// Random tracks carrying `tag` — mirrors `audioByGenre` for tag radio.
+    public func audioByTag(_ tag: String, limit: Int = 60) async throws -> [BaseItem] {
+        let q: [URLQueryItem] = [
+            URLQueryItem(name: "IncludeItemTypes", value: "Audio"),
+            URLQueryItem(name: "Tags", value: tag),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "SortBy", value: "Random"),
+            URLQueryItem(name: "Limit", value: String(limit)),
+            URLQueryItem(name: "UserId", value: userId)
+        ]
+        let req = try request("Users/\(userId)/Items", query: q)
+        let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
+        return res.Items.filter { $0.type == "Audio" }
+    }
+
     public func albums(genre: String) async throws -> [BaseItem] {
         try await albumsQuery(params: [("Genres", genre)])
     }

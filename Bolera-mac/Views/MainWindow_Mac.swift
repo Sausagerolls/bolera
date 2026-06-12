@@ -19,10 +19,15 @@ enum MacHomeSection: String, Hashable {
 }
 
 /// A genre or server tag drilled into from the Genres / Tags pages.
+/// `matches` = the RAW server genre names behind one displayed genre — file
+/// tags often hold "Rock; Pop" in one field and Jellyfin keeps that as a
+/// single genre entity; the UI splits them for display.
 struct MacLibraryFilter: Hashable {
     enum Kind: String { case genre = "Genre", tag = "Tag" }
     let kind: Kind
     let name: String
+    var matches: [String] = []
+    var queryNames: [String] { matches.isEmpty ? [name] : matches }
 }
 
 enum SidebarSelection: Hashable {

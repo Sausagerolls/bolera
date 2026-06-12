@@ -30,10 +30,24 @@ struct LibraryView: View {
 
     /// A genre or server tag the user drilled into — pushed as a VALUE so the
     /// whole stack stays value-driven (see Category doc above).
+    /// `matches` = the RAW server genre names to query. File tags often hold
+    /// multiple genres in one field ("Rock; Pop") and Jellyfin stores that as a
+    /// single genre entity; we split those for display, so one displayed genre
+    /// can map to several underlying server genres.
     struct Filter: Hashable {
         enum Kind: String { case genre = "Genre", tag = "Tag" }
         let kind: Kind
         let name: String
+        var matches: [String] = []
+        var queryNames: [String] { matches.isEmpty ? [name] : matches }
+    }
+
+    /// Split a server genre entity into displayable genres ("Rock; Pop" → 2).
+    static func splitGenre(_ name: String) -> [String] {
+        let parts = name.split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return parts.isEmpty ? [name] : parts
     }
 
     var body: some View {
@@ -598,17 +612,33 @@ struct PlaylistsView: View {
 // MARK: - Genres & Tags
 
 /// All music genres on the server; tap one to browse its artists + albums.
+/// Multi-genre entities ("Rock; Pop" — unsplit file tags the server kept as
+/// one genre) are split for display; each displayed genre remembers the raw
+/// server names so drilling in still matches everything.
 struct GenresView: View {
     @EnvironmentObject var auth: AuthManager
     @State private var genres: [BaseItem] = []
     @State private var loading = false
     private let cacheKey = "genres"
 
+    /// display name → raw server genre names containing it, alphabetised.
+    private var displayGenres: [(name: String, matches: [String])] {
+        var map: [String: Set<String>] = [:]
+        for g in genres {
+            for part in LibraryView.splitGenre(g.Name) {
+                map[part, default: []].insert(g.Name)
+            }
+        }
+        return map
+            .map { (name: $0.key, matches: Array($0.value).sorted()) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
     var body: some View {
-        List(genres) { g in
-            NavigationLink(value: LibraryView.Filter(kind: .genre, name: g.Name)) {
+        List(displayGenres, id: \.name) { g in
+            NavigationLink(value: LibraryView.Filter(kind: .genre, name: g.name, matches: g.matches)) {
                 Label {
-                    Text(g.Name).font(.body)
+                    Text(g.name).font(.body)
                 } icon: {
                     Image(systemName: "guitars").foregroundStyle(.tint).frame(width: 28)
                 }
@@ -793,10 +823,17 @@ struct FilterDetailView: View {
         defer { loading = false }
         let client = JellyfinClient(baseURL: url, auth: auth)
         let isGenre = filter.kind == .genre
-        async let ar = isGenre ? client.artists(genre: filter.name) : client.artists(tag: filter.name)
-        async let al = isGenre ? client.albums(genre: filter.name) : client.albums(tag: filter.name)
-        var fetchedArtists = (try? await ar) ?? []
-        let fetchedAlbums = (try? await al) ?? []
+        // A displayed genre can map to several RAW server genres (unsplit
+        // "Rock; Pop" file tags) — query each and merge, de-duped by id.
+        var fetchedArtists: [BaseItem] = []
+        var fetchedAlbums: [BaseItem] = []
+        var seenArtist = Set<String>(), seenAlbum = Set<String>()
+        for raw in filter.queryNames {
+            async let ar = isGenre ? client.artists(genre: raw) : client.artists(tag: raw)
+            async let al = isGenre ? client.albums(genre: raw) : client.albums(tag: raw)
+            for a in (try? await ar) ?? [] where seenArtist.insert(a.Id).inserted { fetchedArtists.append(a) }
+            for a in (try? await al) ?? [] where seenAlbum.insert(a.Id).inserted { fetchedAlbums.append(a) }
+        }
         // Many libraries only genre/tag the ALBUMS — derive the artists from the
         // matching albums when the artist query itself comes back empty.
         if fetchedArtists.isEmpty {
@@ -808,6 +845,7 @@ struct FilterDetailView: View {
         }
         let vis = LibraryVisibilityStore.shared
         artists = vis.filter(fetchedArtists)
+            .sorted { $0.Name.localizedCaseInsensitiveCompare($1.Name) == .orderedAscending }
         albums = vis.filter(fetchedAlbums)
     }
 
@@ -817,7 +855,7 @@ struct FilterDetailView: View {
         Task {
             defer { startingRadio = false }
             await GenreTagRadio.start(filter.kind == .genre ? .genre : .tag,
-                                      name: filter.name,
+                                      names: filter.queryNames,
                                       client: JellyfinClient(baseURL: url, auth: auth))
         }
     }

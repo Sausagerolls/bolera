@@ -838,11 +838,28 @@ private struct ArtistsContent_Mac: View {
 // MARK: - Genres & Tags (mac)
 
 /// All music genres on the server; click one to browse its artists + albums.
+/// Unsplit multi-genre entities ("Rock; Pop") are split for display; each
+/// displayed genre carries the raw server names so drill-in matches them all.
 private struct GenresContent_Mac: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var nav: MacNavCoordinator
     @State private var genres: [BaseItem] = []
     @State private var loading = false
+
+    private var displayGenres: [(name: String, matches: [String])] {
+        var map: [String: Set<String>] = [:]
+        for g in genres {
+            let parts = g.Name.split(separator: ";")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            for part in (parts.isEmpty ? [g.Name] : parts) {
+                map[part, default: []].insert(g.Name)
+            }
+        }
+        return map
+            .map { (name: $0.key, matches: Array($0.value).sorted()) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
 
     var body: some View {
         Group {
@@ -850,11 +867,11 @@ private struct GenresContent_Mac: View {
                 ContentUnavailableView("No Genres", systemImage: "guitars",
                     description: Text("Your server has no music genres set."))
             } else {
-                List(genres) { g in
-                    Button { nav.openFilter(MacLibraryFilter(kind: .genre, name: g.Name)) } label: {
+                List(displayGenres, id: \.name) { g in
+                    Button { nav.openFilter(MacLibraryFilter(kind: .genre, name: g.name, matches: g.matches)) } label: {
                         HStack(spacing: 10) {
                             Image(systemName: "guitars").foregroundStyle(.tint).frame(width: 24)
-                            Text(g.Name)
+                            Text(g.name)
                             Spacer()
                             Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                         }
@@ -998,7 +1015,7 @@ private struct FilterDetail_Mac: View {
         Task {
             defer { startingRadio = false }
             await GenreTagRadio.start(filter.kind == .genre ? .genre : .tag,
-                                      name: filter.name,
+                                      names: filter.queryNames,
                                       client: JellyfinClient(baseURL: url, auth: auth))
         }
     }
@@ -1009,10 +1026,17 @@ private struct FilterDetail_Mac: View {
         defer { loading = false }
         let client = JellyfinClient(baseURL: url, auth: auth)
         let isGenre = filter.kind == .genre
-        async let ar = isGenre ? client.artists(genre: filter.name) : client.artists(tag: filter.name)
-        async let al = isGenre ? client.albums(genre: filter.name) : client.albums(tag: filter.name)
-        var fetchedArtists = (try? await ar) ?? []
-        let fetchedAlbums = (try? await al) ?? []
+        // A displayed genre can map to several RAW server genres (unsplit
+        // "Rock; Pop" file tags) — query each and merge, de-duped by id.
+        var fetchedArtists: [BaseItem] = []
+        var fetchedAlbums: [BaseItem] = []
+        var seenArtist = Set<String>(), seenAlbum = Set<String>()
+        for raw in filter.queryNames {
+            async let ar = isGenre ? client.artists(genre: raw) : client.artists(tag: raw)
+            async let al = isGenre ? client.albums(genre: raw) : client.albums(tag: raw)
+            for a in (try? await ar) ?? [] where seenArtist.insert(a.Id).inserted { fetchedArtists.append(a) }
+            for a in (try? await al) ?? [] where seenAlbum.insert(a.Id).inserted { fetchedAlbums.append(a) }
+        }
         // Many libraries only genre/tag the ALBUMS — derive artists from the
         // matching albums when the artist query comes back empty.
         if fetchedArtists.isEmpty {
@@ -1024,6 +1048,7 @@ private struct FilterDetail_Mac: View {
         }
         let vis = LibraryVisibilityStore.shared
         artists = vis.filter(fetchedArtists)
+            .sorted { $0.Name.localizedCaseInsensitiveCompare($1.Name) == .orderedAscending }
         albums = vis.filter(fetchedAlbums)
     }
 }

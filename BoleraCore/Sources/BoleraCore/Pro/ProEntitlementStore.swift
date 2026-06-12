@@ -24,11 +24,19 @@ public final class ProEntitlementStore: ObservableObject {
     private var updatesTask: Task<Void, Never>?
 
     private init() {
+        #if DEBUG
+        // Dev builds always have Pro: a Debug-signed install can't see the
+        // App Store / TestFlight entitlement, which silently hid every Pro
+        // feature (Skip & Ignore, custom AI, EQ extras…) when testing on
+        // device. Release/TestFlight builds use the real StoreKit state.
+        self.isPro = true
+        #else
         self.isPro = UserDefaults.standard.bool(forKey: Self.cacheKey)
         self.updatesTask = Task { [weak self] in
             await self?.listenForTransactionUpdates()
         }
         Task { await refresh() }
+        #endif
     }
 
     deinit {
@@ -52,6 +60,9 @@ public final class ProEntitlementStore: ObservableObject {
 
     /// Walks current entitlements and updates `isPro`.
     public func recomputeEntitlement() async {
+        #if DEBUG
+        setPro(true)   // dev builds: see init
+        #else
         var owned = false
         for await result in Transaction.currentEntitlements {
             if case .verified(let tx) = result,
@@ -61,6 +72,7 @@ public final class ProEntitlementStore: ObservableObject {
             }
         }
         setPro(owned)
+        #endif
     }
 
     /// Buy the lifetime unlock.

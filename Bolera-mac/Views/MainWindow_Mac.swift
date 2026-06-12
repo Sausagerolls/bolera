@@ -18,10 +18,19 @@ enum MacHomeSection: String, Hashable {
     var isTrackList: Bool { self == .recentTracks || self == .topTracks }
 }
 
+/// A genre or server tag drilled into from the Genres / Tags pages.
+struct MacLibraryFilter: Hashable {
+    enum Kind: String { case genre = "Genre", tag = "Tag" }
+    let kind: Kind
+    let name: String
+}
+
 enum SidebarSelection: Hashable {
     case home
     case artists
     case albums
+    case genres
+    case tags
     case playlists
     case downloads
     case favorites
@@ -31,6 +40,7 @@ enum SidebarSelection: Hashable {
     case albumDetail(BaseItem)
     case artistDetail(BaseItem)
     case playlistDetail(BaseItem)
+    case libraryFilter(MacLibraryFilter)  // genre/tag detail
 }
 
 struct MainWindow_Mac: View {

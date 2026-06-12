@@ -102,6 +102,8 @@ struct SidebarView_Mac: View {
             Section("Library") {
                 row("Artists", icon: "music.mic", tag: .artists)
                 row("Albums", icon: "square.stack.fill", tag: .albums)
+                row("Genres", icon: "guitars.fill", tag: .genres)
+                row("Tags", icon: "tag.fill", tag: .tags)
                 row("Playlists", icon: "list.bullet.rectangle", tag: .playlists)
             }
 

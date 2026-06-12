@@ -15,6 +15,9 @@ struct ContentPane_Mac: View {
             case .artists:     ArtistsContent_Mac()
             case .albums:      AlbumsContent_Mac()
             case .playlists:   PlaylistsContent_Mac()
+            case .genres:      GenresContent_Mac()
+            case .tags:        TagsContent_Mac()
+            case .libraryFilter(let f): FilterDetail_Mac(filter: f)
             case .homeSection(let s): HomeSectionList_Mac(section: s)
             case .library(let id):
                 LibraryContent_Mac(libraryId: id)
@@ -829,6 +832,161 @@ private struct ArtistsContent_Mac: View {
         if let fresh = try? await client.artists(limit: 500) {
             items = LibraryVisibilityStore.shared.filter(fresh)
         }
+    }
+}
+
+// MARK: - Genres & Tags (mac)
+
+/// All music genres on the server; click one to browse its artists + albums.
+private struct GenresContent_Mac: View {
+    @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var nav: MacNavCoordinator
+    @State private var genres: [BaseItem] = []
+    @State private var loading = false
+
+    var body: some View {
+        Group {
+            if genres.isEmpty && !loading {
+                ContentUnavailableView("No Genres", systemImage: "guitars",
+                    description: Text("Your server has no music genres set."))
+            } else {
+                List(genres) { g in
+                    Button { nav.openFilter(MacLibraryFilter(kind: .genre, name: g.Name)) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "guitars").foregroundStyle(.tint).frame(width: 24)
+                            Text(g.Name)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .overlay { if loading && genres.isEmpty { ProgressView() } }
+        .task { await load() }
+    }
+
+    private func load() async {
+        guard let url = auth.serverURL else { return }
+        if genres.isEmpty { loading = true }
+        defer { loading = false }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        if let fresh = try? await client.musicGenres() { genres = fresh }
+    }
+}
+
+/// All server tags applied to music; click one to browse tagged items.
+private struct TagsContent_Mac: View {
+    @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var nav: MacNavCoordinator
+    @State private var tags: [String] = []
+    @State private var loading = false
+
+    var body: some View {
+        Group {
+            if tags.isEmpty && !loading {
+                ContentUnavailableView("No Tags", systemImage: "tag",
+                    description: Text("Tag albums or artists on your Jellyfin server and they'll appear here."))
+            } else {
+                List(tags, id: \.self) { t in
+                    Button { nav.openFilter(MacLibraryFilter(kind: .tag, name: t)) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "tag").foregroundStyle(.tint).frame(width: 24)
+                            Text(t)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .overlay { if loading && tags.isEmpty { ProgressView() } }
+        .task { await load() }
+    }
+
+    private func load() async {
+        guard let url = auth.serverURL else { return }
+        if tags.isEmpty { loading = true }
+        defer { loading = false }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        if let fresh = try? await client.musicTags() { tags = fresh }
+    }
+}
+
+/// Artists + albums for a genre or server tag.
+private struct FilterDetail_Mac: View {
+    let filter: MacLibraryFilter
+    @EnvironmentObject var auth: AuthManager
+    @State private var artists: [BaseItem] = []
+    @State private var albums: [BaseItem] = []
+    @State private var loading = false
+
+    private let artistColumns = [GridItem(.adaptive(minimum: 180), spacing: 16)]
+    private let albumColumns = [GridItem(.adaptive(minimum: 160), spacing: 16)]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack(spacing: 8) {
+                    Image(systemName: filter.kind == .genre ? "guitars" : "tag")
+                        .foregroundStyle(.tint)
+                    Text(filter.name).font(.title2.bold())
+                    Text(filter.kind.rawValue).font(.caption)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .foregroundStyle(.secondary)
+                }
+                if !artists.isEmpty {
+                    Text("Artists").font(.title3).bold()
+                    LazyVGrid(columns: artistColumns, spacing: 18) {
+                        ForEach(artists) { a in ArtistTile_Mac(item: a) }
+                    }
+                }
+                if !albums.isEmpty {
+                    Text("Albums").font(.title3).bold()
+                    LazyVGrid(columns: albumColumns, spacing: 18) {
+                        ForEach(albums) { al in AlbumTile_Mac(item: al) }
+                    }
+                }
+                if artists.isEmpty && albums.isEmpty && !loading {
+                    ContentUnavailableView("Nothing Here",
+                        systemImage: filter.kind == .genre ? "guitars" : "tag",
+                        description: Text("No artists or albums match this \(filter.kind.rawValue.lowercased())."))
+                        .frame(maxWidth: .infinity, minHeight: 300)
+                }
+            }
+            .padding(20)
+        }
+        .overlay { if loading && artists.isEmpty && albums.isEmpty { ProgressView() } }
+        .task(id: filter) { await load() }
+    }
+
+    private func load() async {
+        guard let url = auth.serverURL else { return }
+        loading = true
+        defer { loading = false }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        let isGenre = filter.kind == .genre
+        async let ar = isGenre ? client.artists(genre: filter.name) : client.artists(tag: filter.name)
+        async let al = isGenre ? client.albums(genre: filter.name) : client.albums(tag: filter.name)
+        var fetchedArtists = (try? await ar) ?? []
+        let fetchedAlbums = (try? await al) ?? []
+        // Many libraries only genre/tag the ALBUMS — derive artists from the
+        // matching albums when the artist query comes back empty.
+        if fetchedArtists.isEmpty {
+            var seen = Set<String>()
+            fetchedArtists = fetchedAlbums.compactMap { album -> BaseItem? in
+                guard let a = album.AlbumArtists?.first, seen.insert(a.Id).inserted else { return nil }
+                return .stub(id: a.Id, name: a.Name, type: "MusicArtist")
+            }
+        }
+        let vis = LibraryVisibilityStore.shared
+        artists = vis.filter(fetchedArtists)
+        albums = vis.filter(fetchedAlbums)
     }
 }
 

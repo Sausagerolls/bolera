@@ -42,6 +42,12 @@ final class MacNavCoordinator: ObservableObject {
         selection = .homeSection(section)
     }
 
+    /// Drill into a genre / server tag's artists + albums.
+    func openFilter(_ filter: MacLibraryFilter) {
+        pushCurrent()
+        selection = .libraryFilter(filter)
+    }
+
     /// Open the Favourites page, optionally pre-selecting a tab.
     func openFavorites(mode: String?) {
         pushCurrent()

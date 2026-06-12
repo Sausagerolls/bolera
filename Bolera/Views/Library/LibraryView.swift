@@ -12,12 +12,15 @@ struct LibraryView: View {
     /// what double-fired the first push (tap album → flick → list reappears).
     enum Category: String, Hashable, CaseIterable {
         case favorites = "Favorites", artists = "Artists", albums = "Albums"
+        case genres = "Genres", tags = "Tags"
         case playlists = "Playlists", downloaded = "Downloaded"
         var icon: String {
             switch self {
             case .favorites:  return "heart.fill"
             case .artists:    return "music.mic"
             case .albums:     return "square.stack.fill"
+            case .genres:     return "guitars.fill"
+            case .tags:       return "tag.fill"
             case .playlists:  return "list.bullet.rectangle.portrait.fill"
             case .downloaded: return "arrow.down.circle.fill"
             }
@@ -25,11 +28,19 @@ struct LibraryView: View {
         var tint: Color { self == .favorites ? .pink : (self == .downloaded ? .green : .accentColor) }
     }
 
+    /// A genre or server tag the user drilled into — pushed as a VALUE so the
+    /// whole stack stays value-driven (see Category doc above).
+    struct Filter: Hashable {
+        enum Kind: String { case genre = "Genre", tag = "Tag" }
+        let kind: Kind
+        let name: String
+    }
+
     var body: some View {
         List {
             if connectivity.isOnline {
                 Section {
-                    ForEach([Category.favorites, .artists, .albums, .playlists], id: \.self) { categoryRow($0) }
+                    ForEach([Category.favorites, .artists, .albums, .genres, .tags, .playlists], id: \.self) { categoryRow($0) }
                 }
             } else {
                 Section {
@@ -56,6 +67,9 @@ struct LibraryView: View {
             default:            AlbumDetailView(album: item)
             }
         }
+        .navigationDestination(for: Filter.self) { f in
+            FilterDetailView(filter: f).navigationTitle(f.name)
+        }
     }
 
     private func categoryRow(_ cat: Category) -> some View {
@@ -75,6 +89,8 @@ struct LibraryView: View {
         case .favorites:  FavoritesView()
         case .artists:    ArtistsView()
         case .albums:     AlbumsView()
+        case .genres:     GenresView()
+        case .tags:       TagsView()
         case .playlists:  PlaylistsView()
         case .downloaded: DownloadedView()
         }
@@ -576,6 +592,199 @@ struct PlaylistsView: View {
             items = fresh
             LibraryCache.shared.write(cacheKey, value: fresh)
         }
+    }
+}
+
+// MARK: - Genres & Tags
+
+/// All music genres on the server; tap one to browse its artists + albums.
+struct GenresView: View {
+    @EnvironmentObject var auth: AuthManager
+    @State private var genres: [BaseItem] = []
+    @State private var loading = false
+    private let cacheKey = "genres"
+
+    var body: some View {
+        List(genres) { g in
+            NavigationLink(value: LibraryView.Filter(kind: .genre, name: g.Name)) {
+                Label {
+                    Text(g.Name).font(.body)
+                } icon: {
+                    Image(systemName: "guitars").foregroundStyle(.tint).frame(width: 28)
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(Color.clear)
+            .listRowSeparatorTint(.white.opacity(0.06))
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .overlay {
+            if loading && genres.isEmpty { ProgressView() }
+            else if genres.isEmpty && !loading {
+                ContentUnavailableView("No Genres", systemImage: "guitars",
+                    description: Text("Your server has no music genres set."))
+            }
+        }
+        .task {
+            if genres.isEmpty, let cached = LibraryCache.shared.read(cacheKey, as: [BaseItem].self) {
+                genres = cached
+            }
+            await load()
+        }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        guard let url = auth.serverURL else { return }
+        if genres.isEmpty { loading = true }
+        defer { loading = false }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        if let fresh = try? await client.musicGenres() {
+            genres = fresh
+            LibraryCache.shared.write(cacheKey, value: fresh)
+        }
+    }
+}
+
+/// All tags applied to music on the server; tap one to browse tagged items.
+struct TagsView: View {
+    @EnvironmentObject var auth: AuthManager
+    @State private var tags: [String] = []
+    @State private var loading = false
+    private let cacheKey = "tags"
+
+    var body: some View {
+        List(tags, id: \.self) { t in
+            NavigationLink(value: LibraryView.Filter(kind: .tag, name: t)) {
+                Label {
+                    Text(t).font(.body)
+                } icon: {
+                    Image(systemName: "tag").foregroundStyle(.tint).frame(width: 28)
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(Color.clear)
+            .listRowSeparatorTint(.white.opacity(0.06))
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .overlay {
+            if loading && tags.isEmpty { ProgressView() }
+            else if tags.isEmpty && !loading {
+                ContentUnavailableView("No Tags", systemImage: "tag",
+                    description: Text("Tag albums or artists on your Jellyfin server and they'll appear here."))
+            }
+        }
+        .task {
+            if tags.isEmpty, let cached = LibraryCache.shared.read(cacheKey, as: [String].self) {
+                tags = cached
+            }
+            await load()
+        }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        guard let url = auth.serverURL else { return }
+        if tags.isEmpty { loading = true }
+        defer { loading = false }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        if let fresh = try? await client.musicTags() {
+            tags = fresh
+            LibraryCache.shared.write(cacheKey, value: fresh)
+        }
+    }
+}
+
+/// Artists + albums for a genre or server tag.
+struct FilterDetailView: View {
+    let filter: LibraryView.Filter
+    @EnvironmentObject var auth: AuthManager
+    @State private var artists: [BaseItem] = []
+    @State private var albums: [BaseItem] = []
+    @State private var loading = false
+
+    private let albumColumns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if !artists.isEmpty {
+                    Text("Artists").font(.title3.bold()).padding(.horizontal)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 14) {
+                            ForEach(artists) { artist in
+                                NavigationLink(value: artist) {
+                                    VStack(spacing: 6) {
+                                        JellyfinImage(itemId: artist.Id, tag: artist.ImageTags?["Primary"], maxWidth: 300, cornerRadius: 200)
+                                            .frame(width: 110, height: 110)
+                                        Text(artist.Name).font(.caption).lineLimit(1)
+                                            .frame(width: 110)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                }
+                if !albums.isEmpty {
+                    Text("Albums").font(.title3.bold()).padding(.horizontal)
+                    LazyVGrid(columns: albumColumns, spacing: 18) {
+                        ForEach(albums) { album in
+                            NavigationLink(value: album) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Color.clear.aspectRatio(1, contentMode: .fit)
+                                        .overlay(JellyfinImage(itemId: album.Id, tag: album.ImageTags?["Primary"], maxWidth: 400, cornerRadius: 10))
+                                    Text(album.Name).font(.subheadline).lineLimit(1)
+                                    Text(album.primaryArtistName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                Color.clear.frame(height: 100)
+            }
+            .padding(.top, 8)
+        }
+        .overlay {
+            if loading && artists.isEmpty && albums.isEmpty { ProgressView() }
+            else if artists.isEmpty && albums.isEmpty && !loading {
+                ContentUnavailableView("Nothing Here",
+                    systemImage: filter.kind == .genre ? "guitars" : "tag",
+                    description: Text("No artists or albums match this \(filter.kind.rawValue.lowercased())."))
+            }
+        }
+        .task(id: filter) { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        guard let url = auth.serverURL else { return }
+        loading = true
+        defer { loading = false }
+        let client = JellyfinClient(baseURL: url, auth: auth)
+        let isGenre = filter.kind == .genre
+        async let ar = isGenre ? client.artists(genre: filter.name) : client.artists(tag: filter.name)
+        async let al = isGenre ? client.albums(genre: filter.name) : client.albums(tag: filter.name)
+        var fetchedArtists = (try? await ar) ?? []
+        let fetchedAlbums = (try? await al) ?? []
+        // Many libraries only genre/tag the ALBUMS — derive the artists from the
+        // matching albums when the artist query itself comes back empty.
+        if fetchedArtists.isEmpty {
+            var seen = Set<String>()
+            fetchedArtists = fetchedAlbums.compactMap { album -> BaseItem? in
+                guard let a = album.AlbumArtists?.first, seen.insert(a.Id).inserted else { return nil }
+                return .stub(id: a.Id, name: a.Name, type: "MusicArtist")
+            }
+        }
+        let vis = LibraryVisibilityStore.shared
+        artists = vis.filter(fetchedArtists)
+        albums = vis.filter(fetchedAlbums)
     }
 }
 

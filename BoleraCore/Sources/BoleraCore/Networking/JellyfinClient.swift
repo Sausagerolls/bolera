@@ -509,6 +509,68 @@ public struct JellyfinClient {
         return Set(albums.map { $0.Id })
     }
 
+    // MARK: - Genres & Tags browsing
+
+    /// All music genres in the user's library (items with Name/Id).
+    public func musicGenres() async throws -> [BaseItem] {
+        let q: [URLQueryItem] = [
+            URLQueryItem(name: "UserId", value: userId),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "SortBy", value: "SortName"),
+            URLQueryItem(name: "Limit", value: "500")
+        ]
+        let req = try request("MusicGenres", query: q)
+        let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
+        return res.Items
+    }
+
+    /// All tags applied to music items on the server (names only — Jellyfin's
+    /// legacy filters endpoint aggregates them across the queried item types).
+    public func musicTags() async throws -> [String] {
+        struct FiltersResponse: Decodable { let Tags: [String]? }
+        let q: [URLQueryItem] = [
+            URLQueryItem(name: "UserId", value: userId),
+            URLQueryItem(name: "IncludeItemTypes", value: "MusicAlbum,MusicArtist,Audio"),
+            URLQueryItem(name: "Recursive", value: "true")
+        ]
+        let req = try request("Items/Filters", query: q)
+        let res: FiltersResponse = try await send(req, as: FiltersResponse.self)
+        return (res.Tags ?? []).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    public func albums(genre: String) async throws -> [BaseItem] {
+        try await albumsQuery(params: [("Genres", genre)])
+    }
+
+    public func albums(tag: String) async throws -> [BaseItem] {
+        try await albumsQuery(params: [("Tags", tag)])
+    }
+
+    public func artists(genre: String) async throws -> [BaseItem] {
+        try await artistsFiltered(("Genres", genre))
+    }
+
+    public func artists(tag: String) async throws -> [BaseItem] {
+        try await artistsFiltered(("Tags", tag))
+    }
+
+    /// Album artists matching a Genres/Tags filter. Same `/Artists/AlbumArtists`
+    /// endpoint as the A-Z list so phantom track-contributor artists stay out.
+    private func artistsFiltered(_ param: (String, String)) async throws -> [BaseItem] {
+        let q: [URLQueryItem] = [
+            URLQueryItem(name: "UserId", value: userId),
+            URLQueryItem(name: "SortBy", value: "SortName"),
+            URLQueryItem(name: "SortOrder", value: "Ascending"),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "Limit", value: "500"),
+            URLQueryItem(name: "Fields", value: "ImageTags"),
+            URLQueryItem(name: param.0, value: param.1)
+        ]
+        let req = try request("Artists/AlbumArtists", query: q)
+        let res: ItemsResponse<BaseItem> = try await send(req, as: ItemsResponse<BaseItem>.self)
+        return res.Items
+    }
+
     /// Album + artist IDs that live inside `libraryId` (a CollectionFolder).
     /// A track carries its *album* as ParentId, not the library, so to honour a
     /// hidden library in generated mixes / home rows we resolve the library's

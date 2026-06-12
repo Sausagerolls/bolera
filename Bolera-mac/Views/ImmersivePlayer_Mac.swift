@@ -33,6 +33,7 @@ struct ImmersivePlayer_Mac: View {
     /// current favorite state, overriding the (possibly nil) UserData on the
     /// queue item. Server is updated in background; reverts on failure.
     @ObservedObject private var favSync = FavoritesSync.shared
+    @ObservedObject private var proStore = ProEntitlementStore.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -411,7 +412,20 @@ struct ImmersivePlayer_Mac: View {
             iconButton(isFavorite ? "heart.fill" : "heart",
                        help: isFavorite ? "Remove from Favorites" : "Add to Favorites",
                        active: isFavorite) { favoriteToggle() }
+            if proStore.isPro {
+                iconButton("hand.raised.slash.fill",
+                           help: "Skip & Ignore — never auto-play again") {
+                    skipAndIgnore()
+                }
+            }
         }
+    }
+
+    /// Add the playing track to the ignore list and advance the queue.
+    private func skipAndIgnore() {
+        guard let cur = player.current else { return }
+        IgnoredTracksStore.shared.ignore(cur)
+        player.next()
     }
 
     @ViewBuilder

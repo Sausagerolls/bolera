@@ -142,7 +142,23 @@ final class CarPlayCoordinator {
         let radioButton = CPNowPlayingImageButton(image: nowPlayingButtonImage("antenna.radiowaves.left.and.right")) { [weak self] _ in
             self?.startRadioFromCurrent()
         }
-        CPNowPlayingTemplate.shared.updateNowPlayingButtons([favButton, radioButton])
+        var buttons: [CPNowPlayingButton] = [favButton, radioButton]
+        // Skip & Ignore (Pro): skip the track AND never auto-play it again —
+        // one tap to banish a mix misfire without touching the phone.
+        if ProEntitlementStore.shared.isPro {
+            let ignoreButton = CPNowPlayingImageButton(image: nowPlayingButtonImage("hand.raised.slash.fill")) { [weak self] _ in
+                self?.skipAndIgnoreCurrent()
+            }
+            buttons.append(ignoreButton)
+        }
+        CPNowPlayingTemplate.shared.updateNowPlayingButtons(buttons)
+    }
+
+    /// Add the playing track to the ignore list and advance the queue.
+    private func skipAndIgnoreCurrent() {
+        guard let item = AudioPlayer.shared.current else { return }
+        IgnoredTracksStore.shared.ignore(item)
+        AudioPlayer.shared.next()
     }
 
     /// Toggle the favourite state of the playing track. Flips the glyph

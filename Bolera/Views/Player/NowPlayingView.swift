@@ -23,6 +23,8 @@ struct NowPlayingContent: View {
     /// Optimistic favourite overrides keyed by track Id — flips the heart
     /// instantly on tap; falls back to the item's own UserData otherwise.
     @ObservedObject private var favSync = FavoritesSync.shared
+    @ObservedObject private var ignoredStore = IgnoredTracksStore.shared
+    @ObservedObject private var proStore = ProEntitlementStore.shared
 
     /// Live drag offset for finger-following dismissal. Resets after gesture ends.
     @GestureState private var dragOffset: CGFloat = 0
@@ -355,6 +357,17 @@ struct NowPlayingContent: View {
             Button { toggleFavourite() } label: {
                 Image(systemName: isCurrentFavourited ? "heart.fill" : "heart")
                     .foregroundStyle(isCurrentFavourited ? .red : .primary)
+            }
+            if proStore.isPro {
+                Spacer()
+                // Skip & Ignore: next track + never auto-play this one again.
+                Button {
+                    guard let cur = player.current else { return }
+                    ignoredStore.ignore(cur)
+                    player.next()
+                } label: {
+                    Image(systemName: "hand.raised.slash.fill")
+                }
             }
             Spacer()
             Button { showLyrics = true } label: {

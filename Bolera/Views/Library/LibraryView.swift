@@ -42,13 +42,6 @@ struct LibraryView: View {
         var queryNames: [String] { matches.isEmpty ? [name] : matches }
     }
 
-    /// Split a server genre entity into displayable genres ("Rock; Pop" → 2).
-    static func splitGenre(_ name: String) -> [String] {
-        let parts = name.split(separator: ";")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return parts.isEmpty ? [name] : parts
-    }
 
     var body: some View {
         List {
@@ -621,17 +614,10 @@ struct GenresView: View {
     @State private var loading = false
     private let cacheKey = "genres"
 
-    /// display name → raw server genre names containing it, alphabetised.
+    /// Cleaned display genres (split on ;,/ — aliases + case variants merged,
+    /// numeric junk dropped), each carrying its raw server names for queries.
     private var displayGenres: [(name: String, matches: [String])] {
-        var map: [String: Set<String>] = [:]
-        for g in genres {
-            for part in LibraryView.splitGenre(g.Name) {
-                map[part, default: []].insert(g.Name)
-            }
-        }
-        return map
-            .map { (name: $0.key, matches: Array($0.value).sorted()) }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        GenreCleaner.displayGenres(from: genres.map { $0.Name })
     }
 
     var body: some View {

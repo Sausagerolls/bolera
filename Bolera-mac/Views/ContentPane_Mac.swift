@@ -846,19 +846,10 @@ private struct GenresContent_Mac: View {
     @State private var genres: [BaseItem] = []
     @State private var loading = false
 
+    /// Cleaned display genres (split on ;,/ — aliases + case variants merged,
+    /// numeric junk dropped), each carrying its raw server names for queries.
     private var displayGenres: [(name: String, matches: [String])] {
-        var map: [String: Set<String>] = [:]
-        for g in genres {
-            let parts = g.Name.split(separator: ";")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            for part in (parts.isEmpty ? [g.Name] : parts) {
-                map[part, default: []].insert(g.Name)
-            }
-        }
-        return map
-            .map { (name: $0.key, matches: Array($0.value).sorted()) }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        GenreCleaner.displayGenres(from: genres.map { $0.Name })
     }
 
     var body: some View {

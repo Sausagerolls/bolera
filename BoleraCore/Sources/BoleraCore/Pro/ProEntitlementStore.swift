@@ -21,10 +21,30 @@ public final class ProEntitlementStore: ObservableObject {
     @Published public var lastError: String?
 
     private static let cacheKey = "bolera.pro.isPro"
+    private static let debugOverrideKey = "bolera.pro.debugSimulate"
     private var updatesTask: Task<Void, Never>?
+
+    #if DEBUG
+    /// Debug-only "Simulate Pro" switch (Settings → bottom). OFF by default so
+    /// the real auto-hide behaviour is preserved; flip it on to test Pro
+    /// features on a cabled Debug build, which otherwise can't see the
+    /// App Store / TestFlight entitlement and reports not-Pro.
+    @Published public var debugSimulatePro: Bool = UserDefaults.standard.bool(forKey: ProEntitlementStore.debugOverrideKey) {
+        didSet {
+            UserDefaults.standard.set(debugSimulatePro, forKey: Self.debugOverrideKey)
+            recomputeWithOverride()
+        }
+    }
+    private var realIsPro = false
+    private func recomputeWithOverride() { isPro = realIsPro || debugSimulatePro }
+    #endif
 
     private init() {
         self.isPro = UserDefaults.standard.bool(forKey: Self.cacheKey)
+        #if DEBUG
+        self.realIsPro = self.isPro
+        recomputeWithOverride()
+        #endif
         self.updatesTask = Task { [weak self] in
             await self?.listenForTransactionUpdates()
         }
@@ -119,9 +139,12 @@ public final class ProEntitlementStore: ObservableObject {
     }
 
     private func setPro(_ value: Bool) {
-        if isPro != value {
-            isPro = value
-        }
         UserDefaults.standard.set(value, forKey: Self.cacheKey)
+        #if DEBUG
+        realIsPro = value
+        recomputeWithOverride()
+        #else
+        if isPro != value { isPro = value }
+        #endif
     }
 }

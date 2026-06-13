@@ -18,6 +18,17 @@ struct SettingsView: View {
                 navRow("Bolera Pro", "star.circle", subtitle: pro.isPro ? "Unlocked" : nil) { ProSettingsView() }
                 navRow("About", "info.circle") { AboutSettingsView() }
             }
+            #if DEBUG
+            Section {
+                Toggle(isOn: $pro.debugSimulatePro) {
+                    Label("Simulate Pro", systemImage: "ladybug")
+                }
+            } header: {
+                Text("Developer")
+            } footer: {
+                Text("Debug builds only. On a cabled build StoreKit can't see your purchase, so Pro features hide. Turn this on to test them.")
+            }
+            #endif
         }
         .scrollContentBackground(.hidden)
         .navigationTitle("Settings")

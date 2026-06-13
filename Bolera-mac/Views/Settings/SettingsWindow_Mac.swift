@@ -369,6 +369,14 @@ private struct ProSettings_Mac: View {
                 }
             }
 
+            #if DEBUG
+            Section("Developer") {
+                Toggle("Simulate Pro", isOn: $pro.debugSimulatePro)
+                Text("Debug builds only — StoreKit can't see your purchase on a local build, so Pro features hide. Turn on to test them.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            #endif
+
             Section("Libraries") {
                 if libraries.isEmpty {
                     Text("Sign in to your server to manage library visibility.")

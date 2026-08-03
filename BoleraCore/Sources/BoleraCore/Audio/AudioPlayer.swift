@@ -199,7 +199,19 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private var userWantsPlayback = false
     /// Position to seek to once a reloaded item reaches .readyToPlay, so a
     /// stall-recovery reload resumes where it froze instead of from the start.
+    /// Always in TRACK time (the offset below is subtracted when seeking).
     private var pendingSeekAfterLoad: Double?
+    /// Seconds into the track where the ACTIVE stream's timeline t=0 begins.
+    /// Non-zero only for a transcode the server opened mid-track via
+    /// `StartTimeTicks` (stall-recovery / restore / scrub on a metered path).
+    /// Every position read from the player must add this; every seek handed to
+    /// the player must subtract it.
+    private var streamTimelineOffset: Double = 0
+    /// True when the active item is the `universal` progressive transcode.
+    /// Transcode responses ignore byte-Range, so a client-side seek outside the
+    /// already-buffered data silently desyncs (timeline jumps, audio restarts
+    /// at 0:00) — those seeks must reopen the stream server-side instead.
+    private var activeStreamIsTranscode = false
 
     /// Position the restored (last-session) queue should resume from on the
     /// FIRST play. The queue is restored paused with no AVPlayer item attached
@@ -650,16 +662,37 @@ public final class AudioPlayer: NSObject, ObservableObject {
             pendingRestorePosition = currentTime
             return
         }
+        let target = max(0, seconds)
+        // Translate to the stream's timeline (shifted on a server-resumed
+        // transcode). A transcode ignores byte-Range, so a client seek only
+        // works inside data the player has ALREADY buffered — anywhere else
+        // (before the stream's mid-track start, or past the buffer) it silently
+        // desyncs: the bar shows the target while the audio restarts at the
+        // stream head. Those seeks reopen the stream server-side instead.
+        let itemTarget = target - streamTimelineOffset
+        if activeStreamIsTranscode {
+            let seekable = activePlayer.currentItem?.seekableTimeRanges.contains { r in
+                let range = r.timeRangeValue
+                let start = CMTimeGetSeconds(range.start)
+                let end = start + CMTimeGetSeconds(range.duration)
+                return itemTarget >= start && itemTarget <= end
+            } ?? false
+            if itemTarget < 0 || !seekable {
+                currentTime = target
+                loadCurrent(autoplay: userWantsPlayback, resumeAt: target)
+                return
+            }
+        }
         // Optimistic update so the UI snaps to the target immediately
         // (avoids the slider flicking back to the pre-scrub position while
         // the AVPlayer seek is in flight). Also blank-out periodic ticks
         // briefly so they don't echo the old position before the seek lands.
-        currentTime = seconds
+        currentTime = target
         ignoreTicksUntil = Date().addingTimeInterval(0.3)
-        let time = CMTime(seconds: seconds, preferredTimescale: 1000)
+        let time = CMTime(seconds: itemTarget, preferredTimescale: 1000)
         activePlayer.seek(to: time) { [weak self] _ in
             guard let self = self, !self.pendingTrackSwap else { return }
-            self.currentTime = seconds
+            self.currentTime = target
             self.updateNowPlaying()
             self.reportProgress(event: "timeupdate", paused: !self.isPlaying)
         }
@@ -720,19 +753,31 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // track enumeration round-trip that would otherwise stall the
         // start of playback by 1–2 seconds. A recovery reload skips the warmed
         // asset (it may be the dead one) and reopens fresh at a capped bitrate.
+        // A resume-at load also skips it: warmed assets always start at the
+        // track's first byte, and a mid-track resume on a metered path needs a
+        // stream the SERVER opens at the resume point (StartTimeTicks) — the
+        // transcode ignores byte-Range, so client-seeking a warmed asset there
+        // desyncs (audio restarts at 0:00 under an unmoved progress bar).
         let asset: AVURLAsset
-        if !isRecovery, let warmed = consumePreloadedAsset(for: item) {
+        var timelineOffset: Double = 0
+        if !isRecovery, resumeAt == nil, let warmed = consumePreloadedAsset(for: item) {
             asset = warmed
         } else {
             let url: URL
             if let local = DownloadManager.shared.localFileURL(for: item.Id) {
                 url = local
             } else if let client = client {
-                url = client.playbackStreamURL(for: item.Id, maxBitrateOverride: recoveryBitrateCap)
+                let stream = client.playbackStream(for: item.Id,
+                                                   maxBitrateOverride: recoveryBitrateCap,
+                                                   startTimeSeconds: resumeAt ?? 0)
+                url = stream.url
+                timelineOffset = stream.timelineOffset
             } else { return }
-            DebugLog.write("[AudioPlayer] load '\(item.Name)' src=\(url.isFileURL ? "local" : "stream") recovery=\(isRecovery) \(DebugLog.redacted(url))")
+            DebugLog.write("[AudioPlayer] load '\(item.Name)' src=\(url.isFileURL ? "local" : "stream") recovery=\(isRecovery) offset=\(Int(timelineOffset)) \(DebugLog.redacted(url))")
             asset = AVURLAsset(url: url)
         }
+        streamTimelineOffset = timelineOffset
+        activeStreamIsTranscode = !asset.url.isFileURL && asset.url.path.contains("/universal")
         let playerItem = AVPlayerItem(asset: asset)
         // Buffer well ahead so short network gaps are absorbed silently rather
         // than stalling. (0 = AVPlayer's conservative default, which let a brief
@@ -768,7 +813,9 @@ public final class AudioPlayer: NSObject, ObservableObject {
         cancelStartGate()   // supersede any pending start-buffer gate from a prior load
 
         pendingTrackSwap = true
-        currentTime = 0
+        // A resume load (recovery / restore) keeps the bar at the resume point
+        // instead of flicking to 0:00 while the stream reopens.
+        currentTime = resumeAt ?? 0
         duration = item.durationSeconds
         artwork = nil
         trackStartedAt = Date()
@@ -787,7 +834,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             guard let self = self else { return }
             self.activePlayer.replaceCurrentItem(with: playerItem)
             self.pendingTrackSwap = false
-            self.currentTime = 0
+            self.currentTime = resumeAt ?? 0
             if autoplay {
                 if resumeAt != nil {
                     // Recovery/resume: do NOT play from 0 here — the readyToPlay
@@ -917,19 +964,48 @@ public final class AudioPlayer: NSObject, ObservableObject {
             if item.status == .readyToPlay {
                 let d = CMTimeGetSeconds(item.duration)
                 DispatchQueue.main.async {
+                    // A stream we asked the server to open mid-track should hold
+                    // only the REMAINDER. If its duration matches the full track,
+                    // the `universal` endpoint chose direct-play and IGNORED
+                    // StartTimeTicks — the stream starts at 0:00 after all. Drop
+                    // the offset and fall through to the client-side seek below
+                    // (direct-played files are byte-range seekable, so it works).
+                    if resumeSeek, self.streamTimelineOffset > 0, d.isFinite,
+                       let full = self.current?.durationSeconds, full > 0,
+                       d > full - self.streamTimelineOffset + 2 {
+                        DebugLog.write("[AudioPlayer] server ignored StartTimeTicks (direct play) — falling back to client seek")
+                        self.streamTimelineOffset = 0
+                    }
                     // The crossfade incoming item readies DURING the fade, while
                     // the display still shows the OUTGOING track — so it must not
                     // overwrite the displayed `duration` (that made the old track's
                     // total jump to the new one's near the end). The midpoint flip
                     // sets duration from the incoming's metadata instead.
-                    if setsDuration, d.isFinite { self.duration = d }
+                    // An offset stream's duration is only the remainder of the
+                    // track — keep the full metadata duration in that case too.
+                    if setsDuration, d.isFinite, self.streamTimelineOffset == 0 { self.duration = d }
                     if resumeSeek, let resume = self.pendingSeekAfterLoad {
                         self.pendingSeekAfterLoad = nil
+                        let itemTarget = resume - self.streamTimelineOffset
+                        if itemTarget < 0.5 {
+                            // Server-side resume: the stream already starts at the
+                            // resume point. Do NOT client-seek a transcode — it
+                            // ignores byte-Range and the seek desyncs (the audio
+                            // restarts at 0:00 under an unmoved bar). Just play.
+                            self.currentTime = resume
+                            if self.userWantsPlayback {
+                                self.activePlayer.play()
+                                self.isPlaying = true
+                            }
+                            self.updateNowPlaying()
+                            self.reportProgress(event: "timeupdate", paused: !self.isPlaying)
+                            return
+                        }
                         // Seek to the resume point BEFORE starting playback so a
                         // recovery reload never plays from 0:00 and flicks back.
                         self.currentTime = resume
                         self.ignoreTicksUntil = Date().addingTimeInterval(0.3)
-                        let t = CMTime(seconds: resume, preferredTimescale: 1000)
+                        let t = CMTime(seconds: itemTarget, preferredTimescale: 1000)
                         self.activePlayer.seek(to: t) { [weak self] _ in
                             guard let self = self else { return }
                             self.currentTime = resume
@@ -1163,6 +1239,11 @@ public final class AudioPlayer: NSObject, ObservableObject {
         activePlayer.replaceCurrentItem(with: nil)
         activeIsA.toggle()
         activePlayer.volume = 1.0
+        // The incoming stream was opened at the track's start — no timeline shift.
+        streamTimelineOffset = 0
+        activeStreamIsTranscode = ((activePlayer.currentItem?.asset as? AVURLAsset).map {
+            !$0.url.isFileURL && $0.url.path.contains("/universal")
+        }) ?? false
         // Re-sync the counter to the incoming track's real elapsed (now active).
         let incomingElapsed = CMTimeGetSeconds(activePlayer.currentItem?.currentTime() ?? .zero)
         currentTime = incomingElapsed.isFinite ? max(0, incomingElapsed) : 0
@@ -1318,7 +1399,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
         let sourcePlayer = showingIncoming ? inactivePlayer : activePlayer
         guard let item = sourcePlayer.currentItem else { return }
         let t = CMTimeGetSeconds(item.currentTime())
-        currentTime = t.isFinite ? t : 0
+        // Add the server-resume offset: an offset stream's t=0 is mid-track.
+        // (The crossfade incoming stream always starts at 0 — no offset.)
+        let offset = showingIncoming ? 0 : streamTimelineOffset
+        currentTime = t.isFinite ? t + offset : 0
         // Silent-stall watchdog. A progressive stream whose connection dies can
         // sit at timeControlStatus == .playing with the playhead FROZEN and never
         // flip to .waiting — so the status-observer recovery never arms. Here we
@@ -1457,7 +1541,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             // the frozen-bar stall instead of jumping from a stale elapsed time.
             if status == .playing, let item = player.currentItem {
                 let t = CMTimeGetSeconds(item.currentTime())
-                if t.isFinite { self.currentTime = t }
+                if t.isFinite { self.currentTime = t + self.streamTimelineOffset }
             }
             self.updateNowPlaying()
         }

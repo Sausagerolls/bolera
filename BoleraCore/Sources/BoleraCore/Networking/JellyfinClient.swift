@@ -1014,6 +1014,15 @@ public struct JellyfinClient {
     /// actually sustains over a flaky link. Wi-Fi/LAN still streams full quality.
     public static let cellularBitrateCeiling = 320
 
+    /// A playback stream plus where its timeline begins within the track.
+    /// `timelineOffset` is non-zero only when the stream is a transcode opened
+    /// with `StartTimeTicks` — the stream's t=0 is that many seconds into the
+    /// track, and the player must add the offset to every position it reads.
+    public struct PlaybackStream {
+        public let url: URL
+        public let timelineOffset: Double
+    }
+
     /// Stream URL for PLAYBACK.
     /// - On Wi-Fi/LAN (not metered): the direct original file (full quality,
     ///   byte-range seekable, lowest latency).
@@ -1024,6 +1033,21 @@ public struct JellyfinClient {
     ///   the bitrate down further on a marginal link until it finds one that
     ///   holds. Downloads always use `audioStreamURL` (full quality).
     public func playbackStreamURL(for itemId: String, maxBitrateOverride: Int? = nil) -> URL {
+        playbackStream(for: itemId, maxBitrateOverride: maxBitrateOverride).url
+    }
+
+    /// Like `playbackStreamURL`, but can ask the server to START the stream
+    /// mid-track. The `universal` transcode ignores byte-Range requests — a
+    /// reopened transcode ALWAYS restarts at the track's first byte, and a
+    /// client-side AVPlayer seek against it silently desyncs (the player's
+    /// timeline shows the seek target while the audio actually plays from
+    /// 0:00 — the "song restarted but the progress bar didn't" bug). So a
+    /// resume on a metered path must be done server-side via `StartTimeTicks`;
+    /// the returned `timelineOffset` tells the player how far the stream's
+    /// timeline is shifted. Direct streams are range-seekable and ignore
+    /// `startTimeSeconds` (offset 0) — the normal client seek works there.
+    public func playbackStream(for itemId: String, maxBitrateOverride: Int? = nil,
+                               startTimeSeconds: Double = 0) -> PlaybackStream {
         // Optional CarPlay bitrate: when connected to CarPlay and the user has
         // opted in, force a (typically lower) reliable rate so playback keeps up
         // through patchy signal while driving — even on Wi-Fi, since they're
@@ -1036,7 +1060,7 @@ public struct JellyfinClient {
         // reload resumes exactly. A flaky home Wi-Fi stalls rarely; reopening the
         // same direct stream is the right move — don't drop to transcode here.
         guard ConnectivityStore.pathIsExpensive || carplayOverride else {
-            return audioStreamURL(for: itemId)
+            return PlaybackStream(url: audioStreamURL(for: itemId), timelineOffset: 0)
         }
         // Baseline cap: an explicit CarPlay bitrate wins; otherwise the metered
         // ceiling capping the user's quality setting.
@@ -1051,9 +1075,9 @@ public struct JellyfinClient {
         // Stall recovery can only step the rate DOWN from the baseline, never up.
         let cap = max(48, min(maxBitrateOverride ?? baseline, baseline))
         guard var comps = URLComponents(url: baseURL.appendingPathComponent("Audio/\(itemId)/universal"), resolvingAgainstBaseURL: false) else {
-            return audioStreamURL(for: itemId)
+            return PlaybackStream(url: audioStreamURL(for: itemId), timelineOffset: 0)
         }
-        comps.queryItems = [
+        var items = [
             URLQueryItem(name: "UserId", value: auth.userId ?? ""),
             URLQueryItem(name: "DeviceId", value: AuthManager.deviceId),
             URLQueryItem(name: "MaxStreamingBitrate", value: String(cap * 1000)),
@@ -1064,7 +1088,17 @@ public struct JellyfinClient {
             URLQueryItem(name: "EnableRedirection", value: "true"),
             URLQueryItem(name: "api_key", value: auth.accessToken ?? "")
         ]
-        return comps.url ?? audioStreamURL(for: itemId)
+        // Server-side resume: start the transcode mid-track. Sub-second starts
+        // aren't worth a shifted timeline — treat them as 0.
+        let offset = startTimeSeconds >= 0.5 ? startTimeSeconds : 0
+        if offset > 0 {
+            items.append(URLQueryItem(name: "StartTimeTicks", value: String(Int64(offset * 10_000_000))))
+        }
+        comps.queryItems = items
+        guard let url = comps.url else {
+            return PlaybackStream(url: audioStreamURL(for: itemId), timelineOffset: 0)
+        }
+        return PlaybackStream(url: url, timelineOffset: offset)
     }
 
     /// Primary image URL for an item. Falls back to album art if the item has no primary tag.

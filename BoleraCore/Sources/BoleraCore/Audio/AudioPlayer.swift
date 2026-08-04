@@ -212,6 +212,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// already-buffered data silently desyncs (timeline jumps, audio restarts
     /// at 0:00) — those seeks must reopen the stream server-side instead.
     private var activeStreamIsTranscode = false
+    /// Throttle for `dumpItemLogs` so a stall burst (3–4 events in the same
+    /// second) writes AVPlayer's HTTP forensics once, not once per event.
+    private var lastItemLogDumpAt: Date = .distantPast
+    /// Access-log event count seen for the current item at the last check.
+    /// A mid-play increase = AVPlayer opened a fresh HTTP connection for the
+    /// same item (the moment a byte-mapping desync can occur) — logged in tick.
+    private var lastAccessEventCount = 0
 
     /// Position the restored (last-session) queue should resume from on the
     /// FIRST play. The queue is restored paused with no AVPlayer item attached
@@ -778,6 +785,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
         streamTimelineOffset = timelineOffset
         activeStreamIsTranscode = !asset.url.isFileURL && asset.url.path.contains("/universal")
+        lastAccessEventCount = 0   // fresh item — reconnect detector re-baselines
         let playerItem = AVPlayerItem(asset: asset)
         // Buffer well ahead so short network gaps are absorbed silently rather
         // than stalling. (0 = AVPlayer's conservative default, which let a brief
@@ -1024,6 +1032,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 let reason = item.error?.localizedDescription ?? "unknown"
                 DebugLog.write("[AudioPlayer] item failed: \(reason) — scheduling recovery")
                 DispatchQueue.main.async {
+                    self.dumpItemLogs(item, context: "failed")
                     self.pendingTrackSwap = false
                     if self.userWantsPlayback {
                         if self.stallStartedAt == nil { self.stallStartedAt = Date() }
@@ -1416,6 +1425,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                       Date().timeIntervalSince(lastAdvanceAt) > 3,
                       !item.isPlaybackLikelyToKeepUp {
                 DebugLog.write("[AudioPlayer] silent underrun — playhead frozen at \(Int(currentTime))s, arming recovery")
+                dumpItemLogs(item, context: "underrun")
                 stallStartedAt = Date()
                 scheduleRecovery()
             }
@@ -1448,6 +1458,21 @@ public final class AudioPlayer: NSObject, ObservableObject {
         if Date().timeIntervalSince(lastProgressReport) > 10 {
             lastProgressReport = Date()
             reportProgress(event: "timeupdate", paused: !isPlaying)
+            // Mid-play reconnect detector: a new access-log event means AVPlayer
+            // silently opened another HTTP connection for the SAME item — the
+            // exact moment a byte-mapping desync (audio restarts, bar doesn't)
+            // can happen. No stall event fires for it, so catch it here and
+            // dump the HTTP forensics while they're fresh.
+            let events = item.accessLog()?.events.count ?? 0
+            if events != lastAccessEventCount {
+                if lastAccessEventCount > 0, events > lastAccessEventCount,
+                   let urlAsset = item.asset as? AVURLAsset, !urlAsset.url.isFileURL {
+                    DebugLog.write("[AudioPlayer] mid-play reconnect: access-log events \(lastAccessEventCount)→\(events) at \(Int(currentTime))s")
+                    lastItemLogDumpAt = .distantPast   // bypass throttle — this is the event we care about
+                    dumpItemLogs(item, context: "reconnect")
+                }
+                lastAccessEventCount = events
+            }
         }
     }
 
@@ -1488,6 +1513,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 // stalls — reasonForWaitingToPlay says WHY (e.g. .toMinimizeStalls
                 // = waiting on data), plus the buffer flags + any item error.
                 DebugLog.write("[AudioPlayer] STALL '\(self.current?.Name ?? "?")' reason=\(player.reasonForWaitingToPlay?.rawValue ?? "nil") bufferEmpty=\(item.isPlaybackBufferEmpty) likelyToKeepUp=\(item.isPlaybackLikelyToKeepUp) bufferFull=\(item.isPlaybackBufferFull) error=\(item.error.map { String(describing: $0) } ?? "none")")
+                self.dumpItemLogs(item, context: "stall")
             }
             // .paused means actually paused; .playing and .waiting both mean the
             // user intends playback (a stall isn't a pause).
@@ -1524,6 +1550,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                     // both are excluded, so only a genuine mid-play death lands here.)
                     if self.stallStartedAt == nil {
                         DebugLog.write("[AudioPlayer] unexpected pause while playback intended — arming recovery")
+                        if let item = player.currentItem { self.dumpItemLogs(item, context: "pause") }
                         self.stallStartedAt = Date()
                         // Same patience as the .waiting case: if there's still
                         // buffered audio, let it resume rather than hard-reloading.
@@ -1544,6 +1571,28 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 if t.isFinite { self.currentTime = t + self.streamTimelineOffset }
             }
             self.updateNowPlaying()
+        }
+    }
+
+    /// Write AVPlayer's internal per-stream HTTP diagnostics (access + error
+    /// logs) into the debug log. These capture what the app's own logging
+    /// can't see: every connection the player opened, response codes, server
+    /// switches and byte counts — the ground truth for a mid-song desync
+    /// (e.g. a mid-file reconnect answered from byte 0 instead of 206).
+    /// Called only on stall/failure events and throttled to one dump per 5s.
+    private func dumpItemLogs(_ item: AVPlayerItem, context: String) {
+        guard Date().timeIntervalSince(lastItemLogDumpAt) > 5 else { return }
+        lastItemLogDumpAt = Date()
+        if let access = item.accessLog() {
+            for e in access.events.suffix(3) {
+                let uri = e.uri.flatMap(URL.init(string:)).map(DebugLog.redacted) ?? "?"
+                DebugLog.write("[AVLog] \(context) access uri=\(uri) server=\(e.serverAddress ?? "?") addrChanges=\(e.numberOfServerAddressChanges) bytes=\(e.numberOfBytesTransferred) stalls=\(e.numberOfStalls) watched=\(Int(e.durationWatched))s transfer=\(String(format: "%.1f", e.transferDuration))s")
+            }
+        }
+        if let err = item.errorLog() {
+            for e in err.events.suffix(5) {
+                DebugLog.write("[AVLog] \(context) error status=\(e.errorStatusCode) domain=\(e.errorDomain) comment=\(e.errorComment ?? "-") server=\(e.serverAddress ?? "?")")
+            }
         }
     }
 

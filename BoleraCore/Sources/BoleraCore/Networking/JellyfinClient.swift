@@ -1077,20 +1077,32 @@ public struct JellyfinClient {
         guard var comps = URLComponents(url: baseURL.appendingPathComponent("Audio/\(itemId)/universal"), resolvingAgainstBaseURL: false) else {
             return PlaybackStream(url: audioStreamURL(for: itemId), timelineOffset: 0)
         }
+        // Server-side resume: start the transcode mid-track. Sub-second starts
+        // aren't worth a shifted timeline — treat them as 0.
+        let offset = startTimeSeconds >= 0.5 ? startTimeSeconds : 0
+        // A resume request MUST actually transcode: when the source is already
+        // within the bitrate cap (typical MP3), `universal` picks DIRECT PLAY
+        // and silently IGNORES StartTimeTicks — the stream is the whole file
+        // from 0:00 while the player trusts the offset (audio restarts at the
+        // intro under an unmoved mid-track bar; PROVEN against the server
+        // 2026-08-05: identical byte-for-byte response with and without ticks,
+        // and the duration heuristic can't catch it because these progressive
+        // streams report indefinite duration). A bogus Container value makes
+        // direct play impossible, so the server transcodes and honours the
+        // resume point (verified: 240s ticks into a 280s MP3 → 39.7s stream).
+        // Normal from-0 loads keep the real list — direct play is fine there.
+        let containers = offset > 0 ? "transcode" : "mp3,aac,m4a,flac,alac,wav,ogg,opus,webma"
         var items = [
             URLQueryItem(name: "UserId", value: auth.userId ?? ""),
             URLQueryItem(name: "DeviceId", value: AuthManager.deviceId),
             URLQueryItem(name: "MaxStreamingBitrate", value: String(cap * 1000)),
-            URLQueryItem(name: "Container", value: "mp3,aac,m4a,flac,alac,wav,ogg,opus,webma"),
+            URLQueryItem(name: "Container", value: containers),
             URLQueryItem(name: "TranscodingContainer", value: "mp3"),
             URLQueryItem(name: "TranscodingProtocol", value: "http"),
             URLQueryItem(name: "AudioCodec", value: "mp3"),
             URLQueryItem(name: "EnableRedirection", value: "true"),
             URLQueryItem(name: "api_key", value: auth.accessToken ?? "")
         ]
-        // Server-side resume: start the transcode mid-track. Sub-second starts
-        // aren't worth a shifted timeline — treat them as 0.
-        let offset = startTimeSeconds >= 0.5 ? startTimeSeconds : 0
         if offset > 0 {
             items.append(URLQueryItem(name: "StartTimeTicks", value: String(Int64(offset * 10_000_000))))
         }

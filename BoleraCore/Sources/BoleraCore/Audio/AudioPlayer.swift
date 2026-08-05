@@ -297,6 +297,12 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // cause of any mid-track buffering rather than disabling pre-buffer.
         shuffle = UserDefaults.standard.bool(forKey: "bolera.shuffle")
         repeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "bolera.repeat")) ?? .off
+        // Stamp the running build into the log — a pulled log must be
+        // attributable to a build (48's forensics were silent and we couldn't
+        // tell "no events" from "old build without the logging").
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        DebugLog.write("[App] Bolera \(v) (build \(b)) started")
         addTimeObserver()
         observePlayer()
         setupRemoteCommands()
@@ -995,6 +1001,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                     if resumeSeek, let resume = self.pendingSeekAfterLoad {
                         self.pendingSeekAfterLoad = nil
                         let itemTarget = resume - self.streamTimelineOffset
+                        DebugLog.write("[AudioPlayer] ready dur=\(d.isFinite ? String(Int(d)) : "inf")s offset=\(Int(self.streamTimelineOffset)) resume=\(Int(resume)) itemTarget=\(String(format: "%.1f", itemTarget)) → \(itemTarget < 0.5 ? "play-in-place" : "client-seek")")
                         if itemTarget < 0.5 {
                             // Server-side resume: the stream already starts at the
                             // resume point. Do NOT client-seek a transcode — it
@@ -1458,6 +1465,17 @@ public final class AudioPlayer: NSObject, ObservableObject {
         if Date().timeIntervalSince(lastProgressReport) > 10 {
             lastProgressReport = Date()
             reportProgress(event: "timeupdate", paused: !isPlaying)
+            // The inactive player must NEVER be audible outside a crossfade —
+            // if it is, that's a second audio source playing from ITS stream
+            // head (byte 0) under the active track's bar: the only remaining
+            // explanation for "audio from the start, bar unmoved" now that the
+            // server-side resume streams are verified to start mid-track.
+            if crossfadeStartedFor == nil, inactivePlayer.timeControlStatus == .playing {
+                let it = inactivePlayer.currentItem.map { CMTimeGetSeconds($0.currentTime()) } ?? -1
+                DebugLog.write("[AudioPlayer] ANOMALY inactive player audible: vol=\(inactivePlayer.volume) time=\(String(format: "%.1f", it))s — muting")
+                inactivePlayer.pause()
+                inactivePlayer.volume = 0
+            }
             // Mid-play reconnect detector: a new access-log event means AVPlayer
             // silently opened another HTTP connection for the SAME item — the
             // exact moment a byte-mapping desync (audio restarts, bar doesn't)
@@ -1580,19 +1598,25 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// switches and byte counts — the ground truth for a mid-song desync
     /// (e.g. a mid-file reconnect answered from byte 0 instead of 206).
     /// Called only on stall/failure events and throttled to one dump per 5s.
-    private func dumpItemLogs(_ item: AVPlayerItem, context: String) {
-        guard Date().timeIntervalSince(lastItemLogDumpAt) > 5 else { return }
-        lastItemLogDumpAt = Date()
-        if let access = item.accessLog() {
-            for e in access.events.suffix(3) {
-                let uri = e.uri.flatMap(URL.init(string:)).map(DebugLog.redacted) ?? "?"
-                DebugLog.write("[AVLog] \(context) access uri=\(uri) server=\(e.serverAddress ?? "?") addrChanges=\(e.numberOfServerAddressChanges) bytes=\(e.numberOfBytesTransferred) stalls=\(e.numberOfStalls) watched=\(Int(e.durationWatched))s transfer=\(String(format: "%.1f", e.transferDuration))s")
-            }
+    private func dumpItemLogs(_ item: AVPlayerItem, context: String, force: Bool = false) {
+        if !force {
+            guard Date().timeIntervalSince(lastItemLogDumpAt) > 5 else { return }
         }
-        if let err = item.errorLog() {
-            for e in err.events.suffix(5) {
-                DebugLog.write("[AVLog] \(context) error status=\(e.errorStatusCode) domain=\(e.errorDomain) comment=\(e.errorComment ?? "-") server=\(e.serverAddress ?? "?")")
-            }
+        lastItemLogDumpAt = Date()
+        let accessEvents = item.accessLog()?.events ?? []
+        let errorEvents = item.errorLog()?.events ?? []
+        // ALWAYS write the summary — an item with ZERO access events never got
+        // a connection at all, which is exactly the kind of fact we're hunting.
+        // (Build 48 silently wrote nothing for empty logs; that silence was
+        // indistinguishable from the dump not running.)
+        let t = CMTimeGetSeconds(item.currentTime())
+        DebugLog.write("[AVLog] \(context) access=\(accessEvents.count) error=\(errorEvents.count) itemTime=\(t.isFinite ? String(Int(t)) : "nan")s offset=\(Int(streamTimelineOffset)) shownTime=\(Int(currentTime))s")
+        for e in accessEvents.suffix(3) {
+            let uri = e.uri.flatMap(URL.init(string:)).map(DebugLog.redacted) ?? "?"
+            DebugLog.write("[AVLog] \(context) access uri=\(uri) server=\(e.serverAddress ?? "?") addrChanges=\(e.numberOfServerAddressChanges) bytes=\(e.numberOfBytesTransferred) stalls=\(e.numberOfStalls) watched=\(Int(e.durationWatched))s transfer=\(String(format: "%.1f", e.transferDuration))s")
+        }
+        for e in errorEvents.suffix(5) {
+            DebugLog.write("[AVLog] \(context) error status=\(e.errorStatusCode) domain=\(e.errorDomain) comment=\(e.errorComment ?? "-") server=\(e.serverAddress ?? "?")")
         }
     }
 
@@ -1684,6 +1708,11 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// is granted runtime to finish the reopen.
     private func reloadCurrentResumingPosition() {
         beginBackgroundTaskIfNeeded()
+        // The item we're about to discard holds the evidence for WHY it died —
+        // dump its full HTTP history before replaceCurrentItem destroys it.
+        if let dying = activePlayer.currentItem {
+            dumpItemLogs(dying, context: "pre-reload", force: true)
+        }
         let resumeAt = currentTime
         stallStartedAt = nil
         // Drop any warmed asset for the current track so we genuinely reopen the

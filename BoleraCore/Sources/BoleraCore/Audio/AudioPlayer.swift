@@ -193,6 +193,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// can be stepped down (320 → 192 → 128 → 96) until it sustains. nil = use
     /// the normal metered-path logic. Cleared when playback resumes.
     private var recoveryBitrateCap: Int?
+    /// True once we've tried the cheap "just tell it to play again" nudge for the
+    /// current stall, so we escalate to a real reload on the next attempt instead
+    /// of nudging forever. Cleared alongside the rest of the recovery ladder.
+    private var nudgedCurrentStall = false
     /// The user's playback INTENT, distinct from `isPlaying` (which is briefly
     /// false during a hard item failure / pause transition). Recovery is gated
     /// on intent so a transient failure doesn't latch playback off.
@@ -439,7 +443,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             queue = items
             currentIndex = index
         }
-        loadCurrent(autoplay: true)
+        loadCurrent(autoplay: true, trigger: "setQueue")
     }
 
     /// Supplies more tracks when an endless mix nears its end. Given the ids
@@ -523,7 +527,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 queue.remove(at: idx)
                 if queue.isEmpty { stop(); return }
                 currentIndex = min(currentIndex, queue.count - 1)
-                loadCurrent(autoplay: true)
+                loadCurrent(autoplay: true, trigger: "removeCurrent")
             } else if idx < currentIndex {
                 queue.remove(at: idx)
                 currentIndex -= 1
@@ -553,7 +557,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // First play after a cross-launch restore: no stream is attached yet —
         // open it now and resume at the remembered position.
         if activePlayer.currentItem == nil {
-            loadCurrent(autoplay: true, resumeAt: pendingRestorePosition)
+            loadCurrent(autoplay: true, resumeAt: pendingRestorePosition, trigger: "firstPlayAfterRestore")
             return
         }
         activePlayer.play()
@@ -614,7 +618,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
         persistPlaybackState()
     }
 
-    public func next() {
+    public func next() { next(trigger: "userNext") }
+
+    /// `trigger` separates a deliberate skip from an automatic end-of-track
+    /// advance in the log — without it a track that ended early and a track the
+    /// user skipped look identical, which is why the 2026-08-07 "it changed
+    /// track by itself" report couldn't be settled from the log.
+    func next(trigger nextTrigger: String) {
         if repeatMode == .one {
             currentTime = 0
             ignoreTicksUntil = Date().addingTimeInterval(0.25)
@@ -633,7 +643,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         while probe < queue.count {
             if !isIgnored(queue[probe]) {
                 currentIndex = probe
-                loadCurrent(autoplay: true)
+                loadCurrent(autoplay: true, trigger: nextTrigger)
                 return
             }
             probe += 1
@@ -643,7 +653,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             for idx in 0..<queue.count {
                 if !isIgnored(queue[idx]) {
                     currentIndex = idx
-                    loadCurrent(autoplay: true)
+                    loadCurrent(autoplay: true, trigger: nextTrigger + "/wrap")
                     return
                 }
             }
@@ -660,7 +670,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
         if currentIndex > 0 {
             currentIndex -= 1
-            loadCurrent(autoplay: true)
+            loadCurrent(autoplay: true, trigger: "previous")
         } else {
             seek(to: 0)
         }
@@ -692,7 +702,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
             } ?? false
             if itemTarget < 0 || !seekable {
                 currentTime = target
-                loadCurrent(autoplay: userWantsPlayback, resumeAt: target)
+                loadCurrent(autoplay: userWantsPlayback, resumeAt: target, trigger: "seekReopen")
                 return
             }
         }
@@ -714,7 +724,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
     public func jumpTo(index: Int) {
         guard queue.indices.contains(index) else { return }
         currentIndex = index
-        loadCurrent(autoplay: true)
+        loadCurrent(autoplay: true, trigger: "jumpTo")
     }
 
     public func toggleShuffle() {
@@ -749,7 +759,12 @@ public final class AudioPlayer: NSObject, ObservableObject {
 
     // MARK: - Loading
 
-    private func loadCurrent(autoplay: Bool, resumeAt: Double? = nil, isRecovery: Bool = false) {
+    /// `trigger` records WHY this load happened. The debug log previously showed
+    /// only that a track loaded, which made a user skip on the head unit and an
+    /// app-initiated track change indistinguishable after the fact — exactly the
+    /// ambiguity that stalled the "it changed track on its own" investigation.
+    private func loadCurrent(autoplay: Bool, resumeAt: Double? = nil, isRecovery: Bool = false,
+                             trigger: String = "?") {
         guard let item = current else { return }
         cancelCrossfade()
         pendingSeekAfterLoad = resumeAt
@@ -774,6 +789,9 @@ public final class AudioPlayer: NSObject, ObservableObject {
         let asset: AVURLAsset
         var timelineOffset: Double = 0
         if !isRecovery, resumeAt == nil, let warmed = consumePreloadedAsset(for: item) {
+            // Log this branch too: it used to write NOTHING, so a track change
+            // served from a warmed asset left no trace at all in the log.
+            DebugLog.write("[AudioPlayer] load '\(item.Name)' src=warmed trigger=\(trigger) idx=\(currentIndex)/\(queue.count)")
             asset = warmed
         } else {
             let url: URL
@@ -786,7 +804,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 url = stream.url
                 timelineOffset = stream.timelineOffset
             } else { return }
-            DebugLog.write("[AudioPlayer] load '\(item.Name)' src=\(url.isFileURL ? "local" : "stream") recovery=\(isRecovery) offset=\(Int(timelineOffset)) \(DebugLog.redacted(url))")
+            DebugLog.write("[AudioPlayer] load '\(item.Name)' src=\(url.isFileURL ? "local" : "stream") trigger=\(trigger) idx=\(currentIndex)/\(queue.count) recovery=\(isRecovery) offset=\(Int(timelineOffset)) \(DebugLog.redacted(url))")
             asset = AVURLAsset(url: url)
         }
         streamTimelineOffset = timelineOffset
@@ -1064,7 +1082,8 @@ public final class AudioPlayer: NSObject, ObservableObject {
             // the queue — a recovery reload swaps items out, and the stale item's
             // end notification must not fire a spurious skip mid-recovery.
             guard !self.pendingTrackSwap, let item = item, self.activePlayer.currentItem === item else { return }
-            self.next()
+            DebugLog.write("[AudioPlayer] item played to end at \(Int(self.currentTime))s of \(Int(self.duration))s — advancing")
+            self.next(trigger: "endOfTrack")
         }
     }
 
@@ -1555,6 +1574,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 self.stallStartedAt = nil
                 self.recoveryAttempt = 0
                 self.recoveryBitrateCap = nil
+                self.nudgedCurrentStall = false
                 self.recoveryWorkItem?.cancel(); self.recoveryWorkItem = nil
                 self.endBackgroundTaskIfNeeded()
             case .paused:
@@ -1649,6 +1669,24 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
     }
 
+    /// True when the active item still holds enough buffered audio that AVPlayer
+    /// will resume on its own — `.waitingToPlayAtSpecifiedRate` with a full /
+    /// keep-up buffer is NOT a dead stream. AVPlayer parks there for a beat on
+    /// every resume-shaped transition (interruption ended, CarPlay route change,
+    /// app foreground) and clears itself a moment later. Reloading such an item
+    /// tears down a perfectly good connection and reopens the transcode — which
+    /// is exactly the audible "the track restarted" the user hears.
+    private var activeItemLooksHealthy: Bool {
+        guard let item = activePlayer.currentItem else { return false }
+        guard item.status != .failed, item.error == nil else { return false }
+        return item.isPlaybackLikelyToKeepUp || item.isPlaybackBufferFull
+    }
+
+    /// How long the current stall has been running (0 if we aren't stalled).
+    private var stallAge: TimeInterval {
+        stallStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+    }
+
     /// Schedule the next recovery reload after a backoff; replaces any pending
     /// one. Called when a stall (or hard item failure) begins.
     private func scheduleRecovery(firstDelayOverride: TimeInterval? = nil) {
@@ -1676,6 +1714,20 @@ public final class AudioPlayer: NSObject, ObservableObject {
             scheduleRecovery()
             return
         }
+        // The stream is still buffered — it isn't dead, it just never got told to
+        // start again (the classic shape after `interruption ended` where AVPlayer
+        // sits in .waiting with a FULL buffer). Re-assert the session and ask it to
+        // play rather than reopening the stream: a reload here is what restarts the
+        // track audibly. Only tried once per stall; if it doesn't take we fall
+        // through to a real reload on the next backoff tick.
+        if activeItemLooksHealthy && !nudgedCurrentStall {
+            nudgedCurrentStall = true
+            DebugLog.write("[AudioPlayer] stalled with a healthy buffer — nudging play() instead of reloading")
+            configureAudioSession()
+            activePlayer.play()
+            scheduleRecovery()
+            return
+        }
         lastReloadAt = Date()
         recoveryAttempt += 1
         recoveryBitrateCap = bitrateCap(for: recoveryAttempt)
@@ -1687,6 +1739,27 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// recover a stalled stream immediately instead of waiting out the backoff.
     private func recoverNowIfStalled(_ reason: String) {
         guard userWantsPlayback, stallStartedAt != nil else { return }
+        // Don't let an "instant" kick jump the patience the timed path deliberately
+        // applies. Two things disqualify a stall from immediate recovery:
+        //
+        //  1. It only just started. Every resume-shaped transition (interruption
+        //     ended, CarPlay connect, app foreground) puts AVPlayer in .waiting for
+        //     a beat, and `didBecomeActive` lands in that same beat — so the kick
+        //     was firing on a player that was about to resume by itself.
+        //  2. The buffer is still healthy, so there's nothing to reopen.
+        //
+        // In both cases the scheduled recovery stays armed and takes over if the
+        // stall is real. This is the mid-song restart: the stream was fine, the
+        // foreground kick reloaded it anyway, and the reopened transcode restarted
+        // the track (and on a marginal link, spiralled down the bitrate ladder).
+        guard stallAge >= 4 else {
+            DebugLog.write("[AudioPlayer] \(reason) — stall only \(String(format: "%.1f", stallAge))s old, letting it settle")
+            return
+        }
+        guard !activeItemLooksHealthy else {
+            DebugLog.write("[AudioPlayer] \(reason) — buffer still healthy, not reloading")
+            return
+        }
         DebugLog.write("[AudioPlayer] \(reason) — recovering stalled stream now")
         recoveryWorkItem?.cancel(); recoveryWorkItem = nil
         fireRecovery()
@@ -1697,6 +1770,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         stallStartedAt = nil
         recoveryAttempt = 0
         recoveryBitrateCap = nil
+        nudgedCurrentStall = false
         recoveryWorkItem?.cancel(); recoveryWorkItem = nil
         endBackgroundTaskIfNeeded()
     }
@@ -1715,6 +1789,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
         }
         let resumeAt = currentTime
         stallStartedAt = nil
+        // Re-baseline the silent-underrun watchdog. It trips when the playhead
+        // stops advancing, and a reload freezes the playhead at `resumeAt` by
+        // design while the new item opens — without this reset the watchdog sees
+        // a "frozen" playhead the instant the reload starts and immediately arms
+        // a SECOND recovery on top of the one in flight.
+        lastTickTime = resumeAt
+        lastAdvanceAt = Date()
         // Drop any warmed asset for the current track so we genuinely reopen the
         // stream instead of reusing the same (possibly dead) asset.
         if let id = current?.Id { preloadedAssets.removeValue(forKey: id) }
@@ -1723,7 +1804,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // reactivate reloads audio into a silent session. configureAudioSession
         // re-asserts the .playback category too.
         configureAudioSession()
-        loadCurrent(autoplay: true, resumeAt: resumeAt, isRecovery: true)
+        loadCurrent(autoplay: true, resumeAt: resumeAt, isRecovery: true, trigger: "stallRecovery")
     }
 
     #if canImport(UIKit)
@@ -1824,7 +1905,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // Resume at the position we were at — a media-services reset must NOT
         // restart the track from 0:00 (it did, which is one cause of the
         // "song restarted" oddity heard while driving).
-        loadCurrent(autoplay: resume, resumeAt: resumeAt > 1 ? resumeAt : nil)
+        loadCurrent(autoplay: resume, resumeAt: resumeAt > 1 ? resumeAt : nil, trigger: "mediaServicesReset")
     }
     #endif
 
@@ -1835,7 +1916,9 @@ public final class AudioPlayer: NSObject, ObservableObject {
         center.playCommand.addTarget { [weak self] _ in self?.play(); return .success }
         center.pauseCommand.addTarget { [weak self] _ in self?.pause(); return .success }
         center.togglePlayPauseCommand.addTarget { [weak self] _ in self?.togglePlayPause(); return .success }
-        center.nextTrackCommand.addTarget { [weak self] _ in self?.next(); return .success }
+        // Tagged separately from an in-app skip: this is the CarPlay / lock-screen
+        // button, the one that matters for "did the head unit skip, or did we?".
+        center.nextTrackCommand.addTarget { [weak self] _ in self?.next(trigger: "remoteNext"); return .success }
         center.previousTrackCommand.addTarget { [weak self] _ in self?.previous(); return .success }
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
@@ -2022,6 +2105,20 @@ public final class AudioPlayer: NSObject, ObservableObject {
                                  currentIndex: currentIndex,
                                  position: currentTime.isFinite ? currentTime : 0,
                                  shuffle: shuffle, repeatMode: repeatMode.rawValue)
+        // Record WHAT we persisted, and whether the index still agrees with the
+        // item the player is actually playing. A restore that comes back on the
+        // wrong track means these two diverged at write time — this line is the
+        // only way to catch that, since the async write may also simply never
+        // land before the app is suspended (only `sync: true` guarantees it).
+        // Both stream and download URLs carry the item id: `/Audio/{id}/universal`
+        // for a stream, `Downloads/{id}.flac` for a local file.
+        let playingId = (activePlayer.currentItem?.asset as? AVURLAsset).map { asset -> String in
+            asset.url.isFileURL
+                ? asset.url.deletingPathExtension().lastPathComponent
+                : asset.url.pathComponents.drop(while: { $0 != "Audio" }).dropFirst().first ?? "?"
+        }
+        let agrees = playingId == nil || playingId == queue[currentIndex].Id
+        DebugLog.write("[AudioPlayer] persist idx=\(currentIndex)/\(queue.count) '\(queue[currentIndex].Name)' at \(Int(snap.position))s sync=\(sync)\(agrees ? "" : " ⚠️ INDEX/ITEM MISMATCH playingId=\(playingId ?? "?")")")
         let write = {
             guard let data = try? JSONEncoder().encode(snap) else { return }
             try? data.write(to: Self.queueStateURL, options: .atomic)
@@ -2066,7 +2163,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         isPlaying = false
         loadArtwork(for: cur)        // show the cover without opening the stream
         updateNowPlaying()
-        DebugLog.write("[AudioPlayer] restored queue (\(q.count) tracks) idx=\(currentIndex) at \(Int(pos))s — paused")
+        DebugLog.write("[AudioPlayer] restored queue (\(q.count) tracks) idx=\(currentIndex) '\(cur.Name)' at \(Int(pos))s — paused")
     }
 
     @objc private func handleWillBackground() { persistPlaybackState(sync: true) }

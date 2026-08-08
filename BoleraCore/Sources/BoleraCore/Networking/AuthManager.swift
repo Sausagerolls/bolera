@@ -18,7 +18,20 @@ public final class AuthManager: ObservableObject {
     }()
 
     public static let clientName = "Bolera"
-    public static let clientVersion = "1.0.0"
+    /// Marketing version, read from the bundle rather than hardcoded — the old
+    /// literal said "1.0.0" long after the app shipped 1.4, both in the Jellyfin
+    /// auth header and in Settings. Reading it means it can never drift again.
+    public static let clientVersion: String =
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    /// Version plus build, e.g. "1.4 (56)". Use for anything shown to the user or
+    /// attached to a support email — the build number is what identifies a
+    /// specific TestFlight build. Note Xcode Cloud stamps its own build number at
+    /// build time, so this reports the real one, not the value in the repo plist.
+    public static let displayVersion: String = {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        return b.map { "\(v) (\($0))" } ?? v
+    }()
     public static let deviceName: String = {
         #if os(iOS)
         return UIDeviceWrapper.modelName

@@ -487,7 +487,7 @@ private struct AboutSettingsView: View {
             }
 
             Section("About") {
-                LabeledContent("Version", value: AuthManager.clientVersion)
+                LabeledContent("Version", value: AuthManager.displayVersion)
                 LabeledContent("Device ID", value: String(AuthManager.deviceId.prefix(8)))
             }
         }
@@ -500,7 +500,7 @@ private struct AboutSettingsView: View {
     private func contactURL() -> URL {
         let subject = "Bolera support"
         let body = """
-        \n\n---\nApp: Bolera \(AuthManager.clientVersion)\nDevice: iOS\nDevice ID: \(String(AuthManager.deviceId.prefix(8)))
+        \n\n---\nApp: Bolera \(AuthManager.displayVersion)\nDevice: iOS\nDevice ID: \(String(AuthManager.deviceId.prefix(8)))
         """
         var comps = URLComponents()
         comps.scheme = "mailto"

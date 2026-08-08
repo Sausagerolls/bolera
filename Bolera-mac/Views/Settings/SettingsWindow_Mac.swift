@@ -463,7 +463,7 @@ private struct AboutSettings_Mac: View {
                 .frame(width: 84, height: 84)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             Text("Bolera").font(.title).bold()
-            Text("Version \(AuthManager.clientVersion)").foregroundStyle(.secondary)
+            Text("Version \(AuthManager.displayVersion)").foregroundStyle(.secondary)
             Text("Native Jellyfin music client").font(.caption).foregroundStyle(.tertiary)
 
             HStack(spacing: 10) {
@@ -496,7 +496,7 @@ private struct AboutSettings_Mac: View {
     private func contactURL() -> URL {
         let subject = "Bolera support"
         let body = """
-        \n\n---\nApp: Bolera \(AuthManager.clientVersion)\nDevice: macOS
+        \n\n---\nApp: Bolera \(AuthManager.displayVersion)\nDevice: macOS
         """
         var comps = URLComponents()
         comps.scheme = "mailto"

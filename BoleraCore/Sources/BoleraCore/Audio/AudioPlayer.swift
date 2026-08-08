@@ -562,12 +562,22 @@ public final class AudioPlayer: NSObject, ObservableObject {
         guard !queue.isEmpty else { return }
         userWantsPlayback = true
         pausedByInterruption = false   // user took manual control
-        // First play after a cross-launch restore: no stream is attached yet —
-        // open it now and resume at the remembered position.
+        // No stream attached — open one and resume where we left off.
+        //
+        // This is NOT only the first-play-after-restore case it was written for.
+        // `pendingRestorePosition` is consumed (set to nil) by loadCurrent, so it
+        // is non-nil for exactly one play per launch; any LATER teardown of the
+        // player item (media-services reset, a failed item cleared, the system
+        // reclaiming it) leaves it nil. Resuming on nil restarts the current track
+        // from 0:00 while the user only pressed Play — the "it jumped back to the
+        // beginning of the same song" report. Fall back to the live position.
         if activePlayer.currentItem == nil {
-            loadCurrent(autoplay: true, resumeAt: pendingRestorePosition, trigger: "firstPlayAfterRestore")
+            let resume = pendingRestorePosition ?? (currentTime > 1 ? currentTime : nil)
+            DebugLog.write("[AudioPlayer] play() with no item — reopening '\(current?.Name ?? "?")' at \(Int(resume ?? 0))s (pendingRestore=\(pendingRestorePosition.map { String(Int($0)) } ?? "nil") currentTime=\(Int(currentTime))s)")
+            loadCurrent(autoplay: true, resumeAt: resume, trigger: "playWithNoItem")
             return
         }
+        DebugLog.write("[AudioPlayer] play() '\(current?.Name ?? "?")' at \(Int(currentTime))s")
         activePlayer.play()
         isPlaying = true
         updateNowPlaying()
@@ -856,6 +866,19 @@ public final class AudioPlayer: NSObject, ObservableObject {
         cancelStartGate()   // supersede any pending start-buffer gate from a prior load
 
         pendingTrackSwap = true
+        // Safety net: `pendingTrackSwap` is cleared only from the item-status
+        // observer. If the item never reaches .readyToPlay or .failed (a stream
+        // that opens but never resolves), it latches true — and tick() bails on
+        // it, so the progress bar FREEZES at the old position for the rest of the
+        // session while audio carries on. Force it open if the swap hasn't
+        // completed in 15s so the clock can never be permanently stuck.
+        let swapItem = playerItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self, weak swapItem] in
+            guard let self = self, self.pendingTrackSwap,
+                  self.activePlayer.currentItem === swapItem else { return }
+            DebugLog.write("[AudioPlayer] ⚠️ track swap never completed after 15s — releasing the clock (bar was frozen)")
+            self.pendingTrackSwap = false
+        }
         // A resume load (recovery / restore) keeps the bar at the resume point
         // instead of flicking to 0:00 while the stream reopens.
         currentTime = resumeAt ?? 0
@@ -1461,7 +1484,12 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // Add the server-resume offset: an offset stream's t=0 is mid-track.
         // (The crossfade incoming stream always starts at 0 — no offset.)
         let offset = showingIncoming ? 0 : streamTimelineOffset
-        currentTime = t.isFinite ? t + offset : 0
+        // An indefinite item time used to slam the position to 0 — the player
+        // reports NaN briefly around item swaps and buffer starvation, and zeroing
+        // there both jumps the bar to the start and poisons every consumer of
+        // currentTime (the resume position a reload/persist would use). Hold the
+        // last known position instead; a real 0 arrives as a finite 0.
+        currentTime = t.isFinite ? t + offset : currentTime
         // Direct detector for the reported symptom: the playhead jumping backwards
         // on the SAME track. Every deliberate reposition (load, seek, recovery
         // reload) either sets pendingTrackSwap or pushes ignoreTicksUntil, both of

@@ -197,6 +197,14 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// current stall, so we escalate to a real reload on the next attempt instead
     /// of nudging forever. Cleared alongside the rest of the recovery ladder.
     private var nudgedCurrentStall = false
+    /// Last position shown to the user, used purely to catch the playhead jumping
+    /// BACKWARDS — the "it restarted the song" symptom — no matter which code path
+    /// caused it. Reset by every deliberate load/seek so only unexplained jumps
+    /// are reported.
+    private var lastShownTime: Double = 0
+    /// One-shot latch for the StartTimeTicks-ignored report below, so a desynced
+    /// stream logs once per load instead of once per tick.
+    private var reportedTicksIgnored = false
     /// The user's playback INTENT, distinct from `isPlaying` (which is briefly
     /// false during a hard item failure / pause transition). Recovery is gated
     /// on intent so a transient failure doesn't latch playback off.
@@ -711,6 +719,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // the AVPlayer seek is in flight). Also blank-out periodic ticks
         // briefly so they don't echo the old position before the seek lands.
         currentTime = target
+        lastShownTime = target    // deliberate reposition — not a backwards jump
         ignoreTicksUntil = Date().addingTimeInterval(0.3)
         let time = CMTime(seconds: itemTarget, preferredTimescale: 1000)
         activePlayer.seek(to: time) { [weak self] _ in
@@ -768,6 +777,8 @@ public final class AudioPlayer: NSObject, ObservableObject {
         guard let item = current else { return }
         cancelCrossfade()
         pendingSeekAfterLoad = resumeAt
+        lastShownTime = resumeAt ?? 0    // deliberate reposition — not a backwards jump
+        reportedTicksIgnored = false
         pendingRestorePosition = nil   // consumed (or superseded by an explicit load)
         if autoplay { userWantsPlayback = true }
         // A fresh (user-initiated) load starts the recovery state machine clean —
@@ -893,6 +904,19 @@ public final class AudioPlayer: NSObject, ObservableObject {
         Task { @MainActor in await LastFmService.shared.updateNowPlaying(item); hasUpdatedNowPlayingCurrent = true }
         maybeExtendQueue()   // endless-mix: top up the queue as it nears the end
         persistPlaybackState()   // remember the queue + new track for next launch
+        // A resumed stream is the one shape that can silently desync (server
+        // ignores StartTimeTicks → audio from 0:00 under a bar at the offset).
+        // Dump its HTTP history once it's had time to connect, so the log shows
+        // the URI that ACTUALLY served the audio (EnableRedirection=true means it
+        // may not be the one we asked for) and how many bytes came back.
+        if timelineOffset > 0 {
+            let opened = item.Id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+                guard let self = self, self.current?.Id == opened,
+                      let it = self.activePlayer.currentItem else { return }
+                self.dumpItemLogs(it, context: "resumed-stream", force: true)
+            }
+        }
     }
 
     /// Asynchronously load tracks off-main, then attach the audio mix on main.
@@ -1438,6 +1462,33 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // (The crossfade incoming stream always starts at 0 — no offset.)
         let offset = showingIncoming ? 0 : streamTimelineOffset
         currentTime = t.isFinite ? t + offset : 0
+        // Direct detector for the reported symptom: the playhead jumping backwards
+        // on the SAME track. Every deliberate reposition (load, seek, recovery
+        // reload) either sets pendingTrackSwap or pushes ignoreTicksUntil, both of
+        // which are excluded above — so anything landing here moved the playhead
+        // without the app asking, and the state dumped alongside it is what
+        // identifies the culprit. Note `t.isFinite ? … : 0` above: an indefinite
+        // item time silently slams the position to 0, which this also catches.
+        if currentTime < lastShownTime - 5 {
+            DebugLog.write("[AudioPlayer] ⏪ POSITION WENT BACKWARDS '\(current?.Name ?? "?")' \(Int(lastShownTime))s → \(Int(currentTime))s (itemTime=\(t.isFinite ? String(Int(t)) : "nan") offset=\(Int(offset)) status=\(activePlayer.timeControlStatus.rawValue) dur=\(Int(duration)) recoveryAttempt=\(recoveryAttempt))")
+            if let it = sourcePlayer.currentItem { dumpItemLogs(it, context: "backwards", force: true) }
+        }
+        lastShownTime = currentTime
+        // Detector for "the audio restarted but the progress bar didn't".
+        //
+        // A stream opened with StartTimeTicks=offset should contain ONLY the
+        // remainder of the track, so its own timeline can never run past
+        // (duration - offset). If it does, the server ignored the ticks and sent
+        // the whole file from 0:00 — meaning the audio is playing the intro while
+        // the bar reads itemTime+offset and keeps climbing. `play-in-place` never
+        // seeks such a stream, and `dur=infs` on these progressive responses makes
+        // the existing duration check useless, so nothing else can catch this.
+        if !reportedTicksIgnored, streamTimelineOffset > 0, duration > 0, t.isFinite,
+           t > (duration - streamTimelineOffset) + 10 {
+            reportedTicksIgnored = true
+            DebugLog.write("[AudioPlayer] ⚠️ SERVER IGNORED StartTimeTicks '\(current?.Name ?? "?")' — stream ran to itemTime=\(Int(t))s but the remainder after offset=\(Int(streamTimelineOffset))s is only \(Int(duration - streamTimelineOffset))s (dur=\(Int(duration))s, bar shows \(Int(currentTime))s). Audio is playing from 0:00 under a bar at the offset.")
+            dumpItemLogs(item, context: "ticks-ignored", force: true)
+        }
         // Silent-stall watchdog. A progressive stream whose connection dies can
         // sit at timeControlStatus == .playing with the playhead FROZEN and never
         // flip to .waiting — so the status-observer recovery never arms. Here we
@@ -2117,7 +2168,11 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 ? asset.url.deletingPathExtension().lastPathComponent
                 : asset.url.pathComponents.drop(while: { $0 != "Audio" }).dropFirst().first ?? "?"
         }
-        let agrees = playingId == nil || playingId == queue[currentIndex].Id
+        // Only meaningful once the swap has settled: persistPlaybackState() is
+        // called from loadCurrent while `pendingTrackSwap` is still true and the
+        // player is still holding the PREVIOUS item, so comparing there flags
+        // every normal track change as a mismatch.
+        let agrees = pendingTrackSwap || playingId == nil || playingId == queue[currentIndex].Id
         DebugLog.write("[AudioPlayer] persist idx=\(currentIndex)/\(queue.count) '\(queue[currentIndex].Name)' at \(Int(snap.position))s sync=\(sync)\(agrees ? "" : " ⚠️ INDEX/ITEM MISMATCH playingId=\(playingId ?? "?")")")
         let write = {
             guard let data = try? JSONEncoder().encode(snap) else { return }

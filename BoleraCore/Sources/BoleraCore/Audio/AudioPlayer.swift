@@ -25,11 +25,14 @@ public final class PlaybackClock: ObservableObject {
     @Published public internal(set) var currentTime: Double = 0
 }
 
-/// Singleton audio engine. Maintains two `AVPlayer` instances so we can crossfade
-/// between consecutive tracks, installs an `MTAudioProcessingTap` on each item
-/// for real-time EQ + visualizer levels, prefers locally downloaded files when
-/// available, and keeps `MPNowPlayingInfoCenter` + `MPRemoteCommandCenter` in
-/// sync so lock screen / Control Center / AirPlay / CarPlay all work.
+/// Owns the play QUEUE and everything around playback: Now Playing, artwork,
+/// scrobbling, queue persistence and the remote-command surface. The audio
+/// itself — the AVPlayer, the current item and the playhead — belongs to
+/// `PlaybackEngine`; this type never touches them directly.
+/// Installs an `MTAudioProcessingTap` per item for real-time EQ + visualizer
+/// levels, prefers locally downloaded files, and keeps
+/// `MPNowPlayingInfoCenter` + `MPRemoteCommandCenter` in sync so lock screen /
+/// Control Center / AirPlay / CarPlay all work.
 public final class AudioPlayer: NSObject, ObservableObject {
     public static let shared = AudioPlayer()
 
@@ -129,16 +132,6 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private var reportStartTask: Task<Void, Never>?
     private let startReportDelay: TimeInterval = 2.0
 
-    /// Count of recovery reloads for the current stuck stream. Drives the
-    /// backoff interval + adaptive bitrate step-down. Reset to 0 the moment
-    /// playback actually resumes or a fresh (non-recovery) track loads.
-    private var recoveryAttempt = 0
-    /// The scheduled (timed) recovery reload, kept so a network-restored kick
-    /// can cancel the pending backoff wait and recover immediately.
-    private var recoveryWorkItem: DispatchWorkItem?
-    /// Debounce so a timer tick and a network-restored kick (or a flapping path)
-    /// can't fire two reloads back-to-back.
-    private var lastReloadAt: Date = .distantPast
     /// The user's playback INTENT, distinct from `isPlaying` (which is briefly
     /// false during a hard item failure / pause transition). Recovery is gated
     /// on intent so a transient failure doesn't latch playback off.
@@ -186,13 +179,6 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// (tunnels, rural gaps) are covered by already-downloaded audio and never
     /// even register as a stall — the single biggest "seamless" lever for music.
     private let forwardBufferSeconds: Double = 120
-    /// Smaller forward buffer for the INCOMING crossfade track. During the fade
-    /// two streams play at once; if the incoming one also tries to grab the full
-    /// 120s it spikes concurrent connections (esp. over HTTP/3/QUIC to Cloudflare)
-    /// and the overlap data-stalls a few seconds into the new track. A modest
-    /// buffer covers the fade + margin; `completeCrossfade` restores the full
-    /// buffer once it's the sole active stream.
-    private let crossfadeForwardBufferSeconds: Double = 30
     /// Minimum audio (seconds) buffered ahead before we START a fresh METERED
     /// stream. Jellyfin's progressive transcode (`universal` endpoint, used for
     /// any source above the cellular bitrate ceiling) has a cold ffmpeg ramp:
@@ -218,8 +204,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
     public override init() {
         super.init()
         // Keep AVPlayer's default pre-buffering (automaticallyWaitsToMinimize-
-        // Stalling = true) so a crossfade has the incoming track buffered ahead
-        // of time. The stall diagnostics in handleTimeControl pinpoint the real
+        // Stalling = true). The engine's stall diagnostics pinpoint the real
         // cause of any mid-track buffering rather than disabling pre-buffer.
         shuffle = UserDefaults.standard.bool(forKey: "bolera.shuffle")
         repeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "bolera.repeat")) ?? .off
@@ -484,17 +469,23 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // reclaiming it) leaves it nil. Resuming on nil restarts the current track
         // from 0:00 while the user only pressed Play — the "it jumped back to the
         // beginning of the same song" report. Fall back to the live position.
-        if activePlayer.currentItem == nil {
-            let resume = pendingRestorePosition ?? (currentTime > 1 ? currentTime : nil)
-            DebugLog.write("[AudioPlayer] play() with no item — reopening '\(current?.Name ?? "?")' at \(Int(resume ?? 0))s (pendingRestore=\(pendingRestorePosition.map { String(Int($0)) } ?? "nil") currentTime=\(Int(currentTime))s)")
-            loadCurrent(autoplay: true, resumeAt: resume, trigger: "playWithNoItem")
+        // Ask the ENGINE to resume. It returns false only when no item is
+        // attached, which is the one case that needs a reopen — and that reopen
+        // must state a position, or it restarts the song from 0:00.
+        //
+        // Going straight to `activePlayer.play()` here (as this did immediately
+        // after the migration) also desynced the engine: its `wantsPlayback`
+        // stayed false, so a later stall was classified as a deliberate pause and
+        // recovery never armed.
+        if engine.play() {
+            isPlaying = true
+            updateNowPlaying()
+            reportProgress(event: "unpause", paused: false)
             return
         }
-        DebugLog.write("[AudioPlayer] play() '\(current?.Name ?? "?")' at \(Int(currentTime))s")
-        activePlayer.play()
-        isPlaying = true
-        updateNowPlaying()
-        reportProgress(event: "unpause", paused: false)
+        let resume = pendingRestorePosition ?? (currentTime > 1 ? currentTime : nil)
+        DebugLog.write("[AudioPlayer] play() with no item — reopening '\(current?.Name ?? "?")' at \(Int(resume ?? 0))s (pendingRestore=\(pendingRestorePosition.map { String(Int($0)) } ?? "nil") currentTime=\(Int(currentTime))s)")
+        loadCurrent(autoplay: true, resumeAt: resume, trigger: "playWithNoItem")
     }
 
     public func pause() {
@@ -766,7 +757,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// our Swift reference to the AudioProcessor that owns the tap. Clearing the
     /// mix makes AVFoundation finalize the tap (firing tapFinalizeCallback ->
     /// release) rather than leaving the audio render thread calling process() on
-    /// a soon-to-be-freed processor — the rapid-track-change / crossfade crash.
+    /// a soon-to-be-freed processor — the rapid-track-change crash.
     private func detachMix(from player: AVPlayer) {
         if let item = player.currentItem, item.audioMix != nil {
             item.audioMix = nil

@@ -97,6 +97,18 @@ public final class PlaybackEngine: NSObject {
     /// be mistaken for the new item finishing. Deliberately NOT consulted by the
     /// clock: a stuck flag must never be able to freeze the playhead.
     private var opening = false
+    /// False until the current item has actually produced audio at least once.
+    /// A freshly opened stream sits in `.waitingToPlayAtSpecifiedRate` with an
+    /// EMPTY buffer while it fills — that is normal startup, not a stall, and
+    /// reopening there just restarts the fill from scratch. Jellyfin's
+    /// progressive transcode has a cold ffmpeg ramp that regularly exceeds a
+    /// few seconds on cellular, so a short fuse here reopens the stream over and
+    /// over, each time from the top of the track.
+    private var hasPlayedSinceOpen = false
+    /// How long a never-yet-played item is allowed to buffer before we conclude
+    /// the open genuinely failed. Generous on purpose: the cost of waiting is a
+    /// slow start, the cost of being wrong is restarting the song.
+    private let firstStartGrace: TimeInterval = 25
     private var wantsPlayback = false
     private var pendingSeek: Double?
 
@@ -144,7 +156,14 @@ public final class PlaybackEngine: NSObject {
                      bitrateCap: Int? = nil,
                      reason: String) {
         let start = max(0, startAt)
+        // A new open supersedes anything armed against the previous item.
+        cancelRecovery()
+        // Only a recovery reopen continues the backoff/bitrate ladder; a fresh
+        // track (or a user action) starts clean, or one bad track would leave the
+        // next one opening at 96kbps with a 60s retry.
+        if reason != "recovery" { recoveryAttempt = 0 }
         opening = true
+        hasPlayedSinceOpen = false
         wantsPlayback = autoplay || wantsPlayback
         currentTrackId = trackId
         trackDuration = duration
@@ -174,7 +193,10 @@ public final class PlaybackEngine: NSObject {
         pendingSeek = (start - streamOffset) > 0.5 ? start : nil
 
         let item = AVPlayerItem(url: url)
-        item.preferredForwardBufferDuration = 0
+        // Buffer well ahead so brief dead spots (tunnels, rural gaps) are covered
+        // by audio already on the device rather than stalling. 0 = AVPlayer's
+        // conservative default, which let a short gap empty the buffer.
+        item.preferredForwardBufferDuration = 120
         installEndObserver(for: item)
         installStatusObserver(for: item)
         detachProcessor?(player)
@@ -300,6 +322,7 @@ public final class PlaybackEngine: NSObject {
                 guard let self else { return }
                 switch p.timeControlStatus {
                 case .playing:
+                    self.hasPlayedSinceOpen = true
                     self.recoveryAttempt = 0
                     self.cancelRecovery()
                     self.state = .playing
@@ -383,16 +406,46 @@ public final class PlaybackEngine: NSObject {
 
     // MARK: - Recovery (invariant 3)
 
+    /// Backoff before the next reopen. Grows so a genuinely dead link is retried
+    /// patiently instead of being hammered — the flat 5s retry this replaces
+    /// reopened one track 141 times in a row, restarting its audio every time.
+    private func recoveryDelay(for attempt: Int) -> TimeInterval {
+        switch attempt {
+        case 0: return 6
+        case 1: return 10
+        case 2: return 15
+        case 3: return 25
+        case 4: return 40
+        default: return 60      // steady cap: keep trying, but cheaply
+        }
+    }
+
     private func enterStalled() {
         guard state != .stalled else { return }
         guard let item = player.currentItem else { return }
+        // A freshly opened stream has an EMPTY buffer and sits in
+        // .waitingToPlayAtSpecifiedRate while it fills. That is startup, not a
+        // stall — and reopening restarts the fill from the top of the track,
+        // which is audible as the song starting over. Give a never-played item a
+        // long grace before treating the open as failed.
+        if !hasPlayedSinceOpen {
+            state = .opening
+            // AVPlayer re-enters .waitingToPlayAtSpecifiedRate several times while
+            // a stream starts. Arm the grace ONCE per open — rescheduling on each
+            // notification would keep pushing the deadline back and a genuinely
+            // dead open would never be retried at all.
+            guard recoveryTimer == nil else { return }
+            DebugLog.write("[Engine] buffering at \(Int(position))s (first start, not yet played) — waiting up to \(Int(firstStartGrace))s")
+            scheduleRecovery(after: firstStartGrace)
+            return
+        }
         // A full/healthy buffer means AVPlayer is re-evaluating, not dying — it
         // resumes on its own, and reopening the stream there is what produced an
         // audible restart. Wait it out; the .playing transition cancels this.
         let healthy = item.isPlaybackLikelyToKeepUp || item.isPlaybackBufferFull
         state = .stalled
-        DebugLog.write("[Engine] stalled at \(Int(position))s (bufferHealthy=\(healthy))")
-        scheduleRecovery(after: healthy ? 20 : 5)
+        DebugLog.write("[Engine] stalled at \(Int(position))s (bufferHealthy=\(healthy)) attempt=\(recoveryAttempt)")
+        scheduleRecovery(after: healthy ? 20 : recoveryDelay(for: recoveryAttempt))
     }
 
     private func scheduleRecovery(after delay: TimeInterval) {
@@ -403,7 +456,10 @@ public final class PlaybackEngine: NSObject {
     }
 
     private func fireRecovery() {
-        guard wantsPlayback, state == .stalled, let trackId = currentTrackId else { return }
+        // The work item has run; clear it so the next stall/grace can arm one.
+        recoveryTimer = nil
+        guard wantsPlayback, state == .stalled || state == .opening,
+              let trackId = currentTrackId else { return }
         guard Date().timeIntervalSince(lastOpenAt) > 2 else { scheduleRecovery(after: 4); return }
         // Reopen AT THE CURRENT POSITION — never at 0. This is invariant 1 doing
         // the work: there is no expressible reopen that loses the playhead.
@@ -425,6 +481,12 @@ public final class PlaybackEngine: NSObject {
     /// genuinely dead stream — a healthy buffer is left alone.
     public func recoverNow(reason: String) {
         guard wantsPlayback, state == .stalled, let item = player.currentItem else { return }
+        // A stream that has never played is still starting up; reopening it here
+        // just restarts the buffer fill from the top of the track.
+        guard hasPlayedSinceOpen else {
+            DebugLog.write("[Engine] \(reason) — still on first start, leaving it alone")
+            return
+        }
         guard !(item.isPlaybackLikelyToKeepUp || item.isPlaybackBufferFull) else {
             DebugLog.write("[Engine] \(reason) — buffer healthy, leaving it alone")
             return

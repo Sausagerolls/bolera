@@ -1026,26 +1026,38 @@ public struct JellyfinClient {
     /// Stream URL for PLAYBACK.
     /// - On Wi-Fi/LAN (not metered): the direct original file (full quality,
     ///   byte-range seekable, lowest latency).
-    /// - On a METERED path: ALWAYS a bitrate-capped progressive transcode via
-    ///   Jellyfin's `universal` endpoint — even when the user picked Lossless,
-    ///   because raw FLAC over cellular stalls constantly. Progressive (not HLS)
-    ///   keeps the EQ tap working. `maxBitrateOverride` lets stall-recovery step
-    ///   the bitrate down further on a marginal link until it finds one that
-    ///   holds. Downloads always use `audioStreamURL` (full quality).
+    /// - On a METERED path: a bitrate-capped `universal` stream — even when the
+    ///   user picked Lossless, because raw FLAC over cellular stalls constantly.
+    ///   A source inside the cap still direct-plays; one that must be re-encoded
+    ///   now gets HLS. `maxBitrateOverride` lets stall-recovery step the bitrate
+    ///   down further on a marginal link until it finds one that holds.
+    ///   Downloads always use `audioStreamURL` (full quality).
+    ///
+    ///   ⚠️ The re-encode path used to be progressive HTTP specifically to keep
+    ///   the `MTAudioProcessingTap` EQ/visualizer working — audio mixes don't
+    ///   attach to HLS assets. That cost is deliberate: progressive restarted the
+    ///   song mid-playback (see `playbackStream`), and correct audio beats EQ.
+    ///   `installTapAsync` already gives up quietly when an asset reports no
+    ///   tracks, so this degrades to "no EQ on a metered re-encode", not a break.
     public func playbackStreamURL(for itemId: String, maxBitrateOverride: Int? = nil) -> URL {
         playbackStream(for: itemId, maxBitrateOverride: maxBitrateOverride).url
     }
 
-    /// Like `playbackStreamURL`, but can ask the server to START the stream
-    /// mid-track. The `universal` transcode ignores byte-Range requests — a
-    /// reopened transcode ALWAYS restarts at the track's first byte, and a
-    /// client-side AVPlayer seek against it silently desyncs (the player's
-    /// timeline shows the seek target while the audio actually plays from
-    /// 0:00 — the "song restarted but the progress bar didn't" bug). So a
-    /// resume on a metered path must be done server-side via `StartTimeTicks`;
-    /// the returned `timelineOffset` tells the player how far the stream's
-    /// timeline is shifted. Direct streams are range-seekable and ignore
-    /// `startTimeSeconds` (offset 0) — the normal client seek works there.
+    /// Like `playbackStreamURL`, but aware of where playback is meant to resume.
+    ///
+    /// `timelineOffset` is now ALWAYS 0 — every transport this returns is fully
+    /// range- or segment-seekable, so the caller resumes with an ordinary client
+    /// seek to `startTimeSeconds`. The struct keeps the field because the engine
+    /// is built around it and a future transport may need it again.
+    ///
+    /// It was non-zero for exactly one reason: the metered re-encode used to be a
+    /// progressive HTTP transcode, which ignores byte-Range in both directions —
+    /// a client seek desynced (timeline at the target, audio from 0:00), and any
+    /// refetch AVPlayer made on its own restarted the song mid-playback. Resuming
+    /// had to be done server-side with `StartTimeTicks`, which dragged in a bogus
+    /// `Container=transcode` to stop direct play swallowing the ticks, and a
+    /// shifted timeline the whole player had to compensate for. HLS removed the
+    /// need for all of it. See the `TranscodingProtocol` comment below.
     public func playbackStream(for itemId: String, maxBitrateOverride: Int? = nil,
                                startTimeSeconds: Double = 0) -> PlaybackStream {
         // Optional CarPlay bitrate: when connected to CarPlay and the user has
@@ -1077,40 +1089,58 @@ public struct JellyfinClient {
         guard var comps = URLComponents(url: baseURL.appendingPathComponent("Audio/\(itemId)/universal"), resolvingAgainstBaseURL: false) else {
             return PlaybackStream(url: audioStreamURL(for: itemId), timelineOffset: 0)
         }
-        // Server-side resume: start the transcode mid-track. Sub-second starts
-        // aren't worth a shifted timeline — treat them as 0.
-        let offset = startTimeSeconds >= 0.5 ? startTimeSeconds : 0
-        // A resume request MUST actually transcode: when the source is already
-        // within the bitrate cap (typical MP3), `universal` picks DIRECT PLAY
-        // and silently IGNORES StartTimeTicks — the stream is the whole file
-        // from 0:00 while the player trusts the offset (audio restarts at the
-        // intro under an unmoved mid-track bar; PROVEN against the server
-        // 2026-08-05: identical byte-for-byte response with and without ticks,
-        // and the duration heuristic can't catch it because these progressive
-        // streams report indefinite duration). A bogus Container value makes
-        // direct play impossible, so the server transcodes and honours the
-        // resume point (verified: 240s ticks into a 280s MP3 → 39.7s stream).
-        // Normal from-0 loads keep the real list — direct play is fine there.
-        let containers = offset > 0 ? "transcode" : "mp3,aac,m4a,flac,alac,wav,ogg,opus,webma"
-        var items = [
+        // NO server-side resume, and no shifted timeline. HLS made the whole
+        // StartTimeTicks design unnecessary: probed against the server
+        // 2026-08-15, `TranscodingProtocol=hls` returns a `#EXT-X-PLAYLIST-TYPE:VOD`
+        // playlist covering the ENTIRE track (99 segments, 296.6s, first segment
+        // at runtimeTicks=0) regardless of StartTimeTicks. So the stream's t=0 is
+        // always the track's 0, and — because a VOD playlist is fully seekable —
+        // an ordinary client-side seek lands exactly where it should.
+        //
+        // That's the opposite of the progressive transcode this replaced, which
+        // ignored byte-Range and forced the offset dance: bogus `Container=transcode`
+        // to stop direct play swallowing the ticks, plus a timeline offset the
+        // whole player had to add and subtract. All of it can go. The real
+        // container list comes back too, so a source inside the cap direct-plays
+        // (range-safe, no re-encode) instead of being forced through ffmpeg.
+        let containers = "mp3,aac,m4a,flac,alac,wav,ogg,opus,webma"
+        let items = [
             URLQueryItem(name: "UserId", value: auth.userId ?? ""),
             URLQueryItem(name: "DeviceId", value: AuthManager.deviceId),
             URLQueryItem(name: "MaxStreamingBitrate", value: String(cap * 1000)),
             URLQueryItem(name: "Container", value: containers),
-            URLQueryItem(name: "TranscodingContainer", value: "mp3"),
-            URLQueryItem(name: "TranscodingProtocol", value: "http"),
-            URLQueryItem(name: "AudioCodec", value: "mp3"),
+            // HLS, not progressive HTTP. A progressive transcode is a single
+            // open-ended GET that IGNORES byte-Range: whenever AVPlayer drops the
+            // connection and re-requests it — which it does by itself, off its own
+            // bat, with nothing in this app involved — the server answers from the
+            // top of the track. The audio restarts while the item clock carries on,
+            // and since the item never reaches its end nothing notices and the song
+            // just plays again. Measured on 'Man of Miracles' 2026-08-14: a 296s
+            // track whose playhead reached 850s, ~2.9 plays.
+            //
+            // HLS is segmented, so a refetch pulls the segment AVPlayer actually
+            // wants. It also reports a FINITE duration, which is what makes the
+            // ignored-StartTimeTicks check in PlaybackEngine.installStatusObserver
+            // work at last — progressive streams report `dur=infs`, so that guard
+            // could never fire.
+            //
+            // ts/aac because MP3-in-MPEG-TS isn't a thing; AAC at a given cap also
+            // beats MP3. Only reached when the server must genuinely re-encode —
+            // a source inside the cap still direct-plays, which is range-safe.
+            URLQueryItem(name: "TranscodingContainer", value: "ts"),
+            URLQueryItem(name: "TranscodingProtocol", value: "hls"),
+            URLQueryItem(name: "AudioCodec", value: "aac"),
             URLQueryItem(name: "EnableRedirection", value: "true"),
             URLQueryItem(name: "api_key", value: auth.accessToken ?? "")
         ]
-        if offset > 0 {
-            items.append(URLQueryItem(name: "StartTimeTicks", value: String(Int64(offset * 10_000_000))))
-        }
         comps.queryItems = items
         guard let url = comps.url else {
             return PlaybackStream(url: audioStreamURL(for: itemId), timelineOffset: 0)
         }
-        return PlaybackStream(url: url, timelineOffset: offset)
+        // Always 0 now — see the container comment above. `startTimeSeconds` is
+        // still taken so callers don't have to care which transport they got;
+        // the engine seeks to it client-side, which HLS and direct play both serve.
+        return PlaybackStream(url: url, timelineOffset: 0)
     }
 
     /// Primary image URL for an item. Falls back to album art if the item has no primary tag.

@@ -105,6 +105,9 @@ public final class PlaybackEngine: NSObject {
     /// few seconds on cellular, so a short fuse here reopens the stream over and
     /// over, each time from the top of the track.
     private var hasPlayedSinceOpen = false
+    /// Set once `checkForStreamOverrun` has ended a track, so a few more clock
+    /// ticks past the duration can't end it repeatedly.
+    private var overrunHandled = false
     /// How long a never-yet-played item is allowed to buffer before we conclude
     /// the open genuinely failed. Generous on purpose: the cost of waiting is a
     /// slow start, the cost of being wrong is restarting the song.
@@ -164,6 +167,7 @@ public final class PlaybackEngine: NSObject {
         if reason != "recovery" { recoveryAttempt = 0 }
         opening = true
         hasPlayedSinceOpen = false
+        overrunHandled = false
         wantsPlayback = autoplay || wantsPlayback
         currentTrackId = trackId
         trackDuration = duration
@@ -286,7 +290,14 @@ public final class PlaybackEngine: NSObject {
                 // Do not let a stale sample from a torn-down item overwrite a
                 // freshly opened position.
                 guard !self.opening else { return }
+                // A just-attached item reports 0 while it loads. For a stream
+                // with no offset that would drag the playhead back to the top of
+                // the track — and `fireRecovery` reopens AT `position`, so a
+                // recovery landing in that window restarts the song from 0:00.
+                // Hold the position set by `open` until the client seek lands.
+                guard self.pendingSeek == nil else { return }
                 self.setPosition(s + self.streamOffset, from: "clock")
+                self.checkForStreamOverrun()
                 self.checkForFrozenPlayhead()
             }
     }
@@ -295,6 +306,27 @@ public final class PlaybackEngine: NSObject {
         guard p.isFinite else { return }
         position = max(0, p)
         onPosition?(position)
+    }
+
+    /// Jellyfin's `/universal` progressive transcode ignores byte-Range. When
+    /// AVPlayer re-issues its GET after a network blip — which it does on its
+    /// own, with nothing in this engine involved — the server answers from the
+    /// TOP OF THE TRACK. The audio audibly starts over while the item clock
+    /// carries on, and because the item never reaches its end AVPlayer never
+    /// fires `AVPlayerItemDidPlayToEndTime`, so nothing notices and the song
+    /// simply plays again. Observed on 'Man of Miracles': a 296s track whose
+    /// playhead reached 850s, i.e. it played through nearly three times.
+    ///
+    /// The playhead running past the track's duration is the one signal that
+    /// this has happened. The audio HAS played in full by then, so the honest
+    /// response is to end the track and move the queue on.
+    private func checkForStreamOverrun() {
+        guard !overrunHandled, trackDuration > 0,
+              position > trackDuration + 3 else { return }
+        overrunHandled = true
+        DebugLog.write("[Engine] playhead ran past the track (\(Int(position))s of \(Int(trackDuration))s) — the stream restarted itself; ending the track")
+        cancelRecovery()
+        onEndedNaturally?()
     }
 
     /// A progressive stream whose connection dies can sit at `.playing` with the
@@ -322,9 +354,19 @@ public final class PlaybackEngine: NSObject {
                 guard let self else { return }
                 switch p.timeControlStatus {
                 case .playing:
-                    self.hasPlayedSinceOpen = true
-                    self.recoveryAttempt = 0
-                    self.cancelRecovery()
+                    // This callback is delivered asynchronously, so one queued
+                    // against the PREVIOUS item can land after `open` has already
+                    // swapped in a new one and cleared the flag. Crediting the
+                    // fresh item with having played makes its normal startup
+                    // buffering look like a mid-song stall, which arms the 6s
+                    // ladder instead of the 25s grace and reopens the stream —
+                    // the song restarts. An item still loading is not ready, so
+                    // require readiness before the flag can be set.
+                    if self.player.currentItem?.status == .readyToPlay {
+                        self.hasPlayedSinceOpen = true
+                        self.recoveryAttempt = 0
+                        self.cancelRecovery()
+                    }
                     self.state = .playing
                 case .paused:
                     // Only a stall if WE still want playback; a real pause set
@@ -428,15 +470,27 @@ public final class PlaybackEngine: NSObject {
         // stall — and reopening restarts the fill from the top of the track,
         // which is audible as the song starting over. Give a never-played item a
         // long grace before treating the open as failed.
-        if !hasPlayedSinceOpen {
+        // Belt and braces on the flag above: a stall reported within a couple of
+        // seconds of an open is that open still starting up, whatever the flag
+        // says. Nothing can reach a genuine mid-song stall that fast.
+        if !hasPlayedSinceOpen || Date().timeIntervalSince(lastOpenAt) < 2 {
             state = .opening
             // AVPlayer re-enters .waitingToPlayAtSpecifiedRate several times while
             // a stream starts. Arm the grace ONCE per open — rescheduling on each
             // notification would keep pushing the deadline back and a genuinely
             // dead open would never be retried at all.
             guard recoveryTimer == nil else { return }
-            DebugLog.write("[Engine] buffering at \(Int(position))s (first start, not yet played) — waiting up to \(Int(firstStartGrace))s")
-            scheduleRecovery(after: firstStartGrace)
+            // A RECOVERY reopen also arrives here with hasPlayedSinceOpen false,
+            // so waiting the flat grace every time pinned the retry interval at
+            // 25s forever and the backoff ladder below never ran — the reopen
+            // loop this branch was added to stop, just slower (12 reopens of one
+            // track, 26s apart, each restarting its audio). Only the first open
+            // gets the full grace; retries follow the ladder.
+            let wait = recoveryAttempt == 0
+                ? firstStartGrace
+                : max(firstStartGrace, recoveryDelay(for: recoveryAttempt))
+            DebugLog.write("[Engine] buffering at \(Int(position))s (first start, not yet played) — waiting up to \(Int(wait))s")
+            scheduleRecovery(after: wait)
             return
         }
         // A full/healthy buffer means AVPlayer is re-evaluating, not dying — it

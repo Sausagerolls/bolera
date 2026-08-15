@@ -297,7 +297,11 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // what matters for background audio; if activation fails we don't want it
         // to also skip the category.
         do {
-            try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetoothA2DP])
+            // .allowAirPlay is only valid for .playAndRecord — passing it with
+            // .playback throws -50 and the whole call fails, leaving the session
+            // on the default .soloAmbient (silenced by the ring switch, killed on
+            // lock). .playback already routes to AirPlay and A2DP by itself.
+            try session.setCategory(.playback, mode: .default, options: [])
         } catch {
             DebugLog.write("[AudioPlayer] setCategory failed: \(error)")
         }

@@ -280,6 +280,14 @@ public final class AudioPlayer: NSObject, ObservableObject {
         #if canImport(UIKit)
         NotificationCenter.default.addObserver(self, selector: #selector(handleWillBackground),
                                                name: UIApplication.didEnterBackgroundNotification, object: nil)
+        // Log lifecycle so a stuck first start can be matched against the app
+        // being backgrounded (and suspended) before audio began.
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            DebugLog.write("[App] entered background")
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+            DebugLog.write("[App] entering foreground")
+        }
         #elseif canImport(AppKit)
         NotificationCenter.default.addObserver(self, selector: #selector(handleWillBackground),
                                                name: NSApplication.willResignActiveNotification, object: nil)

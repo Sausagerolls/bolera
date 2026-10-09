@@ -206,6 +206,7 @@ public final class PlaybackEngine: NSObject {
         detachProcessor?(player)
         player.replaceCurrentItem(with: item)
         attachProcessor?(player, item)
+        scheduleOpeningDiagnostics(for: item)
         state = .opening
         opening = false
     }
@@ -509,6 +510,43 @@ public final class PlaybackEngine: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
+    /// One-line snapshot of why the current item isn't playing: AVPlayer's
+    /// waiting reason, buffer state, and the item's HTTP error/access logs.
+    /// Logged while a first start hangs so the device log says what the
+    /// network actually did instead of just "buffering".
+    private func diagnostics() -> String {
+        guard let item = player.currentItem else { return "no item" }
+        let buffered = item.loadedTimeRanges.last.map { CMTimeRangeGetEnd($0.timeRangeValue).seconds } ?? 0
+        var s = "status=\(item.status.rawValue) tcs=\(player.timeControlStatus.rawValue)"
+        s += " reason=\(player.reasonForWaitingToPlay?.rawValue ?? "-")"
+        s += " keepUp=\(item.isPlaybackLikelyToKeepUp) empty=\(item.isPlaybackBufferEmpty) full=\(item.isPlaybackBufferFull)"
+        s += String(format: " buffered=%.1fs", buffered)
+        if let a = item.accessLog()?.events.last {
+            s += " bytes=\(a.numberOfBytesTransferred) stalls=\(a.numberOfStalls)"
+            s += String(format: " obsKbps=%.0f", a.observedBitrate / 1000)
+            if let ip = a.serverAddress { s += " server=\(ip)" }
+        } else {
+            s += " bytes=0 (no access log yet)"
+        }
+        if let e = item.errorLog()?.events.last {
+            s += " lastError=\(e.errorDomain)/\(e.errorStatusCode) '\(e.errorComment ?? "")'"
+        }
+        if let err = item.error { s += " itemError=\(err.localizedDescription)" }
+        return s
+    }
+
+    /// While a first start hangs, log diagnostics at 5s and 15s — the gap
+    /// before the 25s grace fires is exactly where the evidence is.
+    private func scheduleOpeningDiagnostics(for item: AVPlayerItem) {
+        for delay in [5.0, 15.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak item] in
+                guard let self, let item, self.player.currentItem === item,
+                      !self.hasPlayedSinceOpen, self.wantsPlayback else { return }
+                DebugLog.write("[Engine] still starting after \(Int(delay))s — \(self.diagnostics())")
+            }
+        }
+    }
+
     private func fireRecovery() {
         // The work item has run; clear it so the next stall/grace can arm one.
         recoveryTimer = nil
@@ -526,7 +564,7 @@ public final class PlaybackEngine: NSObject {
             default: return 96
             }
         }()
-        DebugLog.write("[Engine] recovery reopen attempt=\(recoveryAttempt) at \(Int(position))s")
+        DebugLog.write("[Engine] recovery reopen attempt=\(recoveryAttempt) at \(Int(position))s — gave up on: \(diagnostics())")
         open(trackId: trackId, duration: trackDuration, startAt: position,
              autoplay: true, localURL: nil, bitrateCap: cap, reason: "recovery")
     }

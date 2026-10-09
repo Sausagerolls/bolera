@@ -385,7 +385,15 @@ private struct ProSettings_Mac: View {
                     ForEach(libraries) { lib in
                         Toggle(lib.Name, isOn: Binding(
                             get: { !libVisibility.isHidden(lib.Id) },
-                            set: { libVisibility.setHidden(lib.Id, !$0) }
+                            set: { visible in
+                                libVisibility.setHidden(lib.Id, !visible)
+                                // Re-resolve the hidden libraries' album/artist IDs
+                                // so the filter reflects the toggle straight away,
+                                // and drop today's mixes so they rebuild.
+                                guard let url = auth.serverURL else { return }
+                                Task { await libVisibility.refresh(client: JellyfinClient(baseURL: url, auth: auth)) }
+                                DailyPlaylistStore.shared.clear()
+                            }
                         ))
                         .disabled(!pro.isPro)
                     }

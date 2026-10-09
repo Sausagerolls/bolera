@@ -598,8 +598,26 @@ public struct JellyfinClient {
         // otherwise be silently truncated, leaking the overflow back into
         // generated content.
         async let albumIds = allItemIds(parentId: lib, itemType: "MusicAlbum")
-        async let artistIds = allItemIds(parentId: lib, itemType: "MusicArtist")
+        async let artistIds = allAlbumArtistIds(parentId: lib)
         return (await albumIds, await artistIds)
+    }
+
+    /// All album-artist IDs with an album under `parentId`, paged until
+    /// exhausted. Uses `/Artists/AlbumArtists` because MusicArtist items don't
+    /// live inside a library folder: `Users/{id}/Items?IncludeItemTypes=
+    /// MusicArtist&ParentId=…` ignores the ParentId and returns every artist
+    /// on the server, which made hiding any one library hide them all.
+    public func allAlbumArtistIds(parentId: String) async -> Set<String> {
+        var out: Set<String> = []
+        var start = 0
+        let page = 500
+        while true {
+            guard let batch = try? await artists(startIndex: start, limit: page, parentId: parentId) else { break }
+            out.formUnion(batch.map { $0.Id })
+            if batch.count < page { break }   // last page
+            start += batch.count
+        }
+        return out
     }
 
     /// All item IDs of `itemType` under `parentId`, paged until exhausted.

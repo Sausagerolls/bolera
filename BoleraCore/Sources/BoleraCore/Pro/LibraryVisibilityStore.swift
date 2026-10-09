@@ -28,9 +28,12 @@ public final class LibraryVisibilityStore: ObservableObject {
     private static let artistsKey = "bolera.pro.hiddenLibraryArtists"
 
     private init() {
+        // iCloud is the source of truth once any device has written it —
+        // unioning with the local copy meant an un-hide could never stick
+        // (the stale local or cloud entry re-added it on the next launch).
         let defaults = UserDefaults.standard.stringArray(forKey: Self.key) ?? []
-        let cloud = CloudKVS.stringArray(forKey: Self.key) ?? []
-        self.hidden = Set(defaults).union(cloud)
+        let cloud = CloudKVS.stringArray(forKey: Self.key)
+        self.hidden = Set(cloud ?? defaults)
         self.hiddenAlbumIds = Set(UserDefaults.standard.stringArray(forKey: Self.albumsKey) ?? [])
         self.hiddenArtistIds = Set(UserDefaults.standard.stringArray(forKey: Self.artistsKey) ?? [])
         persistLocal()
@@ -40,8 +43,11 @@ public final class LibraryVisibilityStore: ObservableObject {
 
     @objc private nonisolated func cloudChanged(_ note: Notification) {
         Task { @MainActor in
-            let updated = CloudKVS.stringArray(forKey: Self.key) ?? []
-            self.hidden.formUnion(updated)
+            guard let updated = CloudKVS.stringArray(forKey: Self.key) else { return }
+            self.hidden = Set(updated)
+            if self.hidden.isEmpty {
+                self.hiddenAlbumIds = []; self.hiddenArtistIds = []
+            }
             self.persistLocal()
         }
     }
@@ -50,6 +56,7 @@ public final class LibraryVisibilityStore: ObservableObject {
 
     public func setHidden(_ libraryId: String, _ on: Bool) {
         if on { hidden.insert(libraryId) } else { hidden.remove(libraryId) }
+        if hidden.isEmpty { hiddenAlbumIds = []; hiddenArtistIds = [] }
         persistLocal()
         CloudKVS.set(Array(hidden), forKey: Self.key)
         CloudKVS.synchronize()
@@ -80,25 +87,39 @@ public final class LibraryVisibilityStore: ObservableObject {
             }
             return (albums: albums, artists: artists)
         }
+        // An artist with albums in a visible library stays visible — only
+        // artists found exclusively in hidden libraries are hidden. If the
+        // visible libraries can't be listed, hide no artists rather than risk
+        // over-hiding; album-level filtering still covers the hidden tracks.
+        var visibleArtists: Set<String>? = nil
+        if let views = try? await client.userViews() {
+            let visibleLibs = views.filter { $0.CollectionType == "music" && !hidden.contains($0.Id) }
+            visibleArtists = await withTaskGroup(of: Set<String>.self) { group in
+                for lib in visibleLibs { group.addTask { await client.allAlbumArtistIds(parentId: lib.Id) } }
+                var all: Set<String> = []
+                for await ids in group { all.formUnion(ids) }
+                return all
+            }
+        }
         hiddenAlbumIds = resolved.albums
-        hiddenArtistIds = resolved.artists
+        hiddenArtistIds = visibleArtists.map { resolved.artists.subtracting($0) } ?? []
         persistLocal()
     }
 
     /// Drops items belonging to a hidden library: matched by the library id
-    /// itself (top-level folders), the item's album id, the album/artist item
-    /// id, or any credited artist.
+    /// itself (top-level folders), the item's album id, the album item id, or
+    /// an artist found only in hidden libraries. Tracks are matched by album,
+    /// not by credited artist, so a visible track featuring an artist from a
+    /// hidden library still shows.
     public func filter(_ items: [BaseItem]) -> [BaseItem] {
-        guard !hidden.isEmpty || !hiddenAlbumIds.isEmpty || !hiddenArtistIds.isEmpty else {
-            return items
-        }
+        // Nothing hidden → ignore any derived IDs left over from before an
+        // un-hide (they're only cleared on the next refresh).
+        guard !hidden.isEmpty else { return items }
         return items.filter { item in
             if let pid = item.ParentId, hidden.contains(pid) { return false }
             if let aid = item.AlbumId, hiddenAlbumIds.contains(aid) { return false }
             if item.type == "MusicAlbum", hiddenAlbumIds.contains(item.Id) { return false }
             if item.type == "MusicArtist", hiddenArtistIds.contains(item.Id) { return false }
-            for aid in (item.AlbumArtists ?? []).map(\.Id) where hiddenArtistIds.contains(aid) { return false }
-            for aid in (item.ArtistItems ?? []).map(\.Id) where hiddenArtistIds.contains(aid) { return false }
             return true
         }
     }

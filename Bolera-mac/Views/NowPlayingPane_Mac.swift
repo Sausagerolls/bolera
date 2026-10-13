@@ -43,7 +43,7 @@ struct NowPlayingPane_Mac: View {
                 HStack(spacing: 24) {
                     Button { player.toggleShuffle() } label: {
                         Image(systemName: "shuffle")
-                            .foregroundStyle(player.shuffle ? Color.accentColor : Color.secondary)
+                            .foregroundStyle(player.shuffle ? MacA11y.accent : Color.secondary)
                     }
                     Button { player.previous() } label: {
                         Image(systemName: "backward.fill").font(.title2)
@@ -57,7 +57,7 @@ struct NowPlayingPane_Mac: View {
                     }
                     Button { player.cycleRepeatMode() } label: {
                         Image(systemName: repeatIcon)
-                            .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.accentColor)
+                            .foregroundStyle(player.repeatMode == .off ? Color.secondary : MacA11y.accent)
                     }
                 }
                 .buttonStyle(.plain)
@@ -80,7 +80,7 @@ struct NowPlayingPane_Mac: View {
     private var artworkView: some View {
         Group {
             if let artwork {
-                Image(nsImage: artwork).resizable().scaledToFill()
+                Image(artwork: artwork).resizable().scaledToFill()
             } else {
                 Image(systemName: "music.note").font(.system(size: 80)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

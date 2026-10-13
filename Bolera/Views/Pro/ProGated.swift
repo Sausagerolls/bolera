@@ -51,8 +51,8 @@ struct ProGated<Content: View>: View {
                     .font(.headline)
                     .padding(.horizontal, 22)
                     .padding(.vertical, 12)
-                    .background(Color.accentColor, in: Capsule())
-                    .foregroundStyle(.white)
+                    .background(Color.boleraAccent, in: Capsule())
+                    .foregroundStyle(Color.onBoleraAccent)
             }
             .padding(.top, 6)
         }
@@ -69,7 +69,7 @@ struct ProBadge: View {
             .font(.caption2).bold()
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Color.accentColor.opacity(0.2), in: Capsule())
+            .background(Color.boleraAccent.opacity(0.2), in: Capsule())
             .foregroundStyle(.tint)
     }
 }

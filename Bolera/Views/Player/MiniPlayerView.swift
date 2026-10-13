@@ -57,7 +57,7 @@ private struct MiniPlayerProgressFill: View {
             let p = progress
             HStack(spacing: 0) {
                 Rectangle()
-                    .fill(Color.accentColor.opacity(0.35))
+                    .fill(Color.boleraAccent.opacity(0.35))
                     .frame(maxWidth: .infinity)
                     .scaleEffect(x: p, y: 1, anchor: .leading)
                 Spacer(minLength: 0)

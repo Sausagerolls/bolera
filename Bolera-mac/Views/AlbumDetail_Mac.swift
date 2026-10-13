@@ -39,7 +39,7 @@ struct AlbumDetail_Mac: View {
             ZStack {
                 Color.gray.opacity(0.15)
                 if let artwork {
-                    Image(nsImage: artwork).resizable().scaledToFill()
+                    Image(artwork: artwork).resizable().scaledToFill()
                 } else {
                     Image(systemName: "opticaldisc")
                         .font(.system(size: 72))
@@ -117,7 +117,7 @@ struct AlbumDetail_Mac: View {
                 .font(.title3)
                 .frame(width: 38, height: 38)
                 .background(.ultraThinMaterial, in: Circle())
-                .foregroundStyle(active ? Color.accentColor : .primary)
+                .foregroundStyle(active ? MacA11y.accent : .primary)
         }
         .buttonStyle(.plain)
         .help(help)

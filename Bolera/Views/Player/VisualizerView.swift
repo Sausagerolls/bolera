@@ -65,7 +65,7 @@ struct VisualizerView: View {
     private var backdrop: some View {
         ZStack {
             if let art = player.artwork {
-                Image(uiImage: art).resizable().scaledToFill().blur(radius: 90).opacity(0.6).ignoresSafeArea()
+                Image(artwork: art).resizable().scaledToFill().blur(radius: 90).opacity(0.6).ignoresSafeArea()
             } else {
                 Color.black.ignoresSafeArea()
             }
@@ -108,7 +108,7 @@ struct VisualizerView: View {
             let x = originX + CGFloat(i) * (barWidth + gap)
             let rect = CGRect(x: x, y: centerY - h / 2, width: barWidth, height: h)
             let path = Path(roundedRect: rect, cornerRadius: barWidth / 2)
-            let g = Gradient(colors: [Color.accentColor, Color.accentColor.opacity(0.5)])
+            let g = Gradient(colors: [Color.boleraAccent, Color.boleraAccent.opacity(0.5)])
             gfx.fill(path, with: .linearGradient(g,
                                                  startPoint: CGPoint(x: rect.midX, y: rect.minY),
                                                  endPoint: CGPoint(x: rect.midX, y: rect.maxY)))

@@ -10,9 +10,7 @@ struct SettingsWindow_Mac: View {
                 .tabItem { Label("Playback", systemImage: "play.circle") }
             NavigationSettings_Mac()
                 .tabItem { Label("Navigation", systemImage: "hand.draw") }
-            LastFmSettings_Mac()
-                .tabItem { Label("Last.fm", systemImage: "waveform") }
-            OpenScrobblingSettings_Mac()
+            ScrobblingSettings_Mac()
                 .tabItem { Label("Scrobbling", systemImage: "music.note.list") }
             ProSettings_Mac()
                 .tabItem { Label("Pro", systemImage: "star.fill") }
@@ -31,9 +29,10 @@ private struct LastFmSettings_Mac: View {
     @State private var lastError: String?
     @State private var showAdvanced = false
 
+    // Sections only — hosted inside ScrobblingSettings_Mac's Form.
     var body: some View {
-        Form {
-            Section("Account") {
+        Group {
+            Section("Last.fm") {
                 if lastFm.isAuthenticated {
                     LabeledContent("Signed in as", value: lastFm.username ?? "")
                     Button("Sign Out", role: .destructive) { lastFm.signOut() }
@@ -60,7 +59,7 @@ private struct LastFmSettings_Mac: View {
                     Text(err).font(.caption).foregroundStyle(.red)
                 }
             }
-            Section("Scrobbling") {
+            Section("Last.fm scrobbling") {
                 Toggle("Scrobble plays + send now-playing", isOn: $lastFm.enabled)
                     .disabled(!lastFm.isAuthenticated)
                 Text("Tracks > 30s, scrobbled past 50% or 4 minutes.")
@@ -84,8 +83,6 @@ private struct LastFmSettings_Mac: View {
                 }
             }
         }
-        .formStyle(.grouped)
-        .padding()
     }
 
     private func signIn() {
@@ -108,13 +105,13 @@ private struct LastFmSettings_Mac: View {
     }
 }
 
-/// ListenBrainz and Libre.fm — the open scrobbling services — share one tab so
-/// the Settings toolbar doesn't overflow.
-private struct OpenScrobblingSettings_Mac: View {
+/// Every scrobbling service — Last.fm, Libre.fm and ListenBrainz — in one tab.
+private struct ScrobblingSettings_Mac: View {
     var body: some View {
         Form {
-            ListenBrainzSettings_Mac()
+            LastFmSettings_Mac()
             LibreFmSettings_Mac()
+            ListenBrainzSettings_Mac()
         }
         .formStyle(.grouped)
         .padding()
@@ -310,9 +307,31 @@ private struct GeneralSettings_Mac: View {
     @EnvironmentObject var auth: AuthManager
     @ObservedObject private var prefetcher = LibraryPrefetcher.shared
     @AppStorage("bolera.maxBitrate") private var maxBitrate: Int = 320
+    @AppStorage(MacA11y.scaleKey) private var uiScale = 1.0
+    @AppStorage(MacA11y.colourModeKey) private var colourMode = MacA11y.ColourMode.standard.rawValue
+    @AppStorage(MacA11y.labelsKey) private var controlLabels = false
 
     var body: some View {
         Form {
+            Section("Accessibility") {
+                Picker("Control size", selection: $uiScale) {
+                    ForEach(MacA11y.scales, id: \.self) { s in
+                        Text(MacA11y.name(for: s)).tag(s)
+                    }
+                }
+                Text("Sizes the player bar and full-screen player controls. Also in View → Make Controls Larger / Smaller (⌘+ / ⌘−).")
+                    .font(.caption).foregroundStyle(.secondary)
+                Picker("Colour vision", selection: $colourMode) {
+                    ForEach(MacA11y.ColourMode.allCases) { m in
+                        Text(m.name).tag(m.rawValue)
+                    }
+                }
+                Text("Replaces the purple highlight with a colour that stays distinct for that type of colour blindness, and marks controls that are switched on (shuffle, repeat, favourite…) with a dot so they never rely on colour alone. Album art is colour-corrected to match; in Monochrome it's shown in greyscale with boosted contrast.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Show control labels", isOn: $controlLabels)
+                Text("Adds a short label under each player control.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Account") {
                 if let user = auth.userName {
                     LabeledContent("Signed in as", value: user)
@@ -327,7 +346,7 @@ private struct GeneralSettings_Mac: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Label(prefetcher.phase.isEmpty ? "Updating…" : prefetcher.phase,
                               systemImage: "arrow.triangle.2.circlepath")
-                        ProgressView(value: prefetcher.progress).tint(.accentColor)
+                        ProgressView(value: prefetcher.progress).tint(MacA11y.accent)
                     }
                 } else {
                     Button {

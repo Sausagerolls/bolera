@@ -7,14 +7,28 @@ import BoleraCore
 struct SettingsView: View {
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var pro: ProEntitlementStore
+    @ObservedObject private var lastFm = LastFmService.shared
+    @ObservedObject private var libreFm = LibreFmService.shared
+    @ObservedObject private var listenBrainz = ListenBrainzService.shared
+
+    /// Which scrobbling services are on, e.g. "Last.fm, ListenBrainz".
+    private var scrobblingSummary: String? {
+        var on: [String] = []
+        if lastFm.isAuthenticated && lastFm.enabled { on.append("Last.fm") }
+        if libreFm.isAuthenticated && libreFm.enabled { on.append("Libre.fm") }
+        if listenBrainz.isAuthenticated && listenBrainz.enabled { on.append("ListenBrainz") }
+        return on.isEmpty ? nil : on.joined(separator: ", ")
+    }
 
     var body: some View {
         List {
             Section {
                 navRow("Sign In", "person.crop.circle", subtitle: auth.userName) { SignInSettingsView() }
+                navRow("Scrobbling", "music.note.list", subtitle: scrobblingSummary) { ScrobblingSettingsView() }
                 navRow("Streaming", "antenna.radiowaves.left.and.right") { StreamingSettingsView() }
                 navRow("Library", "books.vertical") { LibrarySettingsView() }
                 navRow("AI Features", "sparkles") { AISettingsView() }
+                navRow("Accessibility", "accessibility") { AccessibilitySettingsView() }
                 navRow("Bolera Pro", "star.circle", subtitle: pro.isPro ? "Unlocked" : nil) { ProSettingsView() }
                 navRow("About", "info.circle") { AboutSettingsView() }
             }
@@ -68,32 +82,91 @@ private struct SignInSettingsView: View {
                 }
                 Button("Sign Out", role: .destructive) { auth.logout() }
             }
+        }
+        .scrollContentBackground(.hidden)
+        .navigationTitle("Sign In")
+    }
+}
 
+// MARK: - Scrobbling
+
+private struct ScrobblingSettingsView: View {
+    @ObservedObject private var lastFm = LastFmService.shared
+    @ObservedObject private var libreFm = LibreFmService.shared
+    @ObservedObject private var listenBrainz = ListenBrainzService.shared
+
+    var body: some View {
+        List {
             Section {
-                NavigationLink {
+                serviceRow("Last.fm", "waveform",
+                           user: lastFm.isAuthenticated ? lastFm.username : nil, on: lastFm.enabled) {
                     LastFmSettingsView()
-                } label: {
-                    Label("Last.fm", systemImage: "waveform")
                 }
-                NavigationLink {
-                    ListenBrainzSettingsView()
-                } label: {
-                    Label("ListenBrainz", systemImage: "music.note.list")
-                }
-                NavigationLink {
+                serviceRow("Libre.fm", "dot.radiowaves.left.and.right",
+                           user: libreFm.isAuthenticated ? libreFm.username : nil, on: libreFm.enabled) {
                     LibreFmSettingsView()
-                } label: {
-                    Label("Libre.fm", systemImage: "dot.radiowaves.left.and.right")
                 }
-            } header: {
-                Text("Connected Services")
+                serviceRow("ListenBrainz", "music.note.list",
+                           user: listenBrainz.isAuthenticated ? listenBrainz.username : nil, on: listenBrainz.enabled) {
+                    ListenBrainzSettingsView()
+                }
             } footer: {
-                Text("Sign in to Last.fm to scrobble your plays and sharpen AI mix recommendations. Connect ListenBrainz or Libre.fm to log your listens there too.")
+                Text("Log what you play to any of these — you can use more than one. Last.fm also sharpens AI mix recommendations. Libre.fm and ListenBrainz are free and open source.")
                     .font(.caption)
             }
         }
         .scrollContentBackground(.hidden)
-        .navigationTitle("Sign In")
+        .navigationTitle("Scrobbling")
+    }
+
+    private func serviceRow<Destination: View>(_ title: String, _ symbol: String,
+                                               user: String?, on: Bool,
+                                               @ViewBuilder destination: @escaping () -> Destination) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            HStack {
+                Label(title, systemImage: symbol)
+                Spacer()
+                Text(user.map { on ? $0 : "\($0) (paused)" } ?? "Not connected")
+                    .foregroundStyle(.secondary).font(.caption)
+            }
+        }
+    }
+}
+
+// MARK: - Accessibility
+
+private struct AccessibilitySettingsView: View {
+    @AppStorage(ColourVisionMode.storageKey) private var colourVision = ColourVisionMode.standard.rawValue
+
+    var body: some View {
+        List {
+            Section {
+                Picker("Colour vision", selection: $colourVision) {
+                    ForEach(ColourVisionMode.allCases) { m in
+                        Text(m.name).tag(m.rawValue)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } header: {
+                Text("Colour vision")
+            } footer: {
+                Text("Replaces the purple highlight with a colour that stays distinct for that type of colour blindness, keeps text on it readable, and colour-corrects album art so colours you'd otherwise confuse stand apart. Monochrome shows album art in greyscale with boosted contrast.")
+            }
+            Section {
+                HStack(spacing: 12) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.boleraAccent)
+                        .frame(width: 44, height: 44)
+                        .overlay(Image(systemName: "play.fill").foregroundStyle(Color.onBoleraAccent))
+                    Text("Highlight preview")
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .navigationTitle("Accessibility")
     }
 }
 
@@ -174,7 +247,7 @@ private struct LibrarySettingsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Label(prefetcher.phase.isEmpty ? "Updating…" : prefetcher.phase,
                               systemImage: "arrow.triangle.2.circlepath")
-                        ProgressView(value: prefetcher.progress).tint(.accentColor)
+                        ProgressView(value: prefetcher.progress).tint(Color.boleraAccent)
                     }
                 } else {
                     Button {

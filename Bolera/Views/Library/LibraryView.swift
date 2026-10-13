@@ -25,7 +25,7 @@ struct LibraryView: View {
             case .downloaded: return "arrow.down.circle.fill"
             }
         }
-        var tint: Color { self == .favorites ? .pink : (self == .downloaded ? .green : .accentColor) }
+        var tint: Color { self == .favorites ? .pink : (self == .downloaded ? .green : Color.boleraAccent) }
     }
 
     /// A genre or server tag the user drilled into — pushed as a VALUE so the
@@ -179,7 +179,7 @@ struct LetterIndex: View {
                 let scale = magnification(for: centerY)
                 Text(letter)
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(dragLetter == letter ? Color.accentColor : Color.white.opacity(0.75))
+                    .foregroundStyle(dragLetter == letter ? Color.boleraAccent : Color.white.opacity(0.75))
                     .frame(width: 16, height: rowHeight)
                     .scaleEffect(scale, anchor: .trailing)
                     .animation(.interactiveSpring(response: 0.18, dampingFraction: 0.85), value: dragY)
@@ -740,7 +740,7 @@ struct FilterDetailView: View {
                     Text("Start \(filter.name) Radio")
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 10)
-                .background(Color.accentColor).foregroundStyle(.white)
+                .background(Color.boleraAccent).foregroundStyle(Color.onBoleraAccent)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }
             .disabled(startingRadio)
@@ -912,7 +912,7 @@ private struct DownloadedPlayBar: View {
             } label: {
                 Label("Play", systemImage: "play.fill")
                     .frame(maxWidth: .infinity).padding(.vertical, 10)
-                    .background(Color.accentColor).foregroundStyle(.white)
+                    .background(Color.boleraAccent).foregroundStyle(Color.onBoleraAccent)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
             Button {

@@ -202,11 +202,8 @@ struct BottomPlayerBar_Mac: View {
     @State private var scrub: Double = 0
     @State private var ignoreSlideSetUntil: Date = .distantPast
     @Environment(\.openWindow) private var openWindow
-    @AppStorage(inlineVolumeSliderKey) private var inlineVolume = false
-
-    /// Width of each side group; equal so the transport stays centred. The
-    /// right group needs more room when the volume slider is shown inline.
-    private var sideWidth: CGFloat { inlineVolume ? 300 : 230 }
+    @AppStorage(MacA11y.scaleKey) private var scale = 1.0
+    @AppStorage(MacA11y.labelsKey) private var showLabels = false
 
     private var isFavorite: Bool {
         guard let cur = player.current else { return false }
@@ -225,45 +222,40 @@ struct BottomPlayerBar_Mac: View {
         VStack(spacing: 0) {
             Divider()
             VStack(spacing: 6) {
-                // Top row: artwork + meta on the left, transport in the
-                // middle, secondary controls on the right.
+                // Top row: meta on the left, transport in the middle,
+                // secondary controls on the right. The two sides take equal
+                // flexible widths so the transport stays centred however big
+                // the accessibility settings make the controls.
                 HStack(spacing: 12) {
                     Button(action: onExpand) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(player.current?.Name ?? "Nothing Playing")
-                                .font(.subheadline).lineLimit(1)
+                                .font(.system(size: 11 * scale)).lineLimit(1)
                             Text(player.current?.primaryArtistName ?? "—")
-                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                .font(.system(size: 10 * scale)).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
                     .buttonStyle(.plain)
                     .disabled(player.current == nil)
-                    // Same width as the right-hand group so the transport stays centred.
-                    .frame(width: sideWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Spacer()
-
-                    HStack(spacing: 16) {
-                        transportButton("shuffle", active: player.shuffle) { player.toggleShuffle() }
-                        Button { player.previous() } label: { Image(systemName: "backward.fill") }
-                            .buttonStyle(.plain)
-                        Button { player.togglePlayPause() } label: {
-                            Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 28))
-                        }
-                        .buttonStyle(.plain)
-                        Button { player.next() } label: { Image(systemName: "forward.fill") }
-                            .buttonStyle(.plain)
-                        transportButton(repeatIcon, active: player.repeatMode != .off) {
+                    HStack(spacing: 16 * scale) {
+                        transportButton("shuffle", label: "Shuffle", active: player.shuffle) { player.toggleShuffle() }
+                        PlayerControlButton_Mac(icon: "backward.fill", label: "Previous") { player.previous() }
+                        PlayerControlButton_Mac(icon: player.isPlaying ? "pause.circle.fill" : "play.circle.fill",
+                                                label: player.isPlaying ? "Pause" : "Play",
+                                                size: 28, tint: .primary) { player.togglePlayPause() }
+                        PlayerControlButton_Mac(icon: "forward.fill", label: "Next") { player.next() }
+                        transportButton(repeatIcon, label: "Repeat", active: player.repeatMode != .off) {
                             player.cycleRepeatMode()
                         }
                     }
+                    .fixedSize()
 
-                    Spacer()
-
-                    HStack(spacing: 14) {
+                    HStack(spacing: 14 * scale) {
                         VolumeControl_Mac(sliderWidth: 80)
                         iconButton(isFavorite ? "heart.fill" : "heart",
+                                   label: "Favourite",
                                    active: isFavorite,
                                    help: isFavorite ? "Remove from Favorites" : "Add to Favorites") {
                             toggleFavorite()
@@ -271,35 +263,45 @@ struct BottomPlayerBar_Mac: View {
                         downloadButton
                         if pro.isPro {
                             iconButton("hand.raised.slash.fill",
+                                       label: "Ignore",
                                        help: "Skip & Ignore — never auto-play again") {
                                 skipAndIgnore()
                             }
                         }
                         iconButton("list.bullet",
+                                   label: "Queue",
                                    help: "Show Queue") {
                             showQueue = true
                         }
                         Menu {
                             playerContextMenu
                         } label: {
-                            Image(systemName: "ellipsis")
-                                .foregroundStyle(.secondary)
+                            VStack(spacing: 2) {
+                                Image(systemName: "ellipsis")
+                                    .font(.system(size: 13 * scale))
+                                if showLabels {
+                                    Text("More").font(.system(size: 9 * scale))
+                                }
+                            }
+                            .foregroundStyle(Color.primary)
                         }
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
-                        .frame(width: 24)
+                        .fixedSize()
                         .help("More")
                         iconButton("rectangle.expand.vertical",
+                                   label: "Expand",
                                    help: "Open Now Playing (⌘⇧N)") {
                             onExpand()
                         }
                         .keyboardShortcut("n", modifiers: [.command, .shift])
-                        iconButton("pip.enter", help: "Micro Player") {
+                        iconButton("pip.enter", label: "Mini", help: "Micro Player") {
                             nav.microPlayer = true
                         }
                     }
+                    .fixedSize()
                     .disabled(player.current == nil)
-                    .frame(width: sideWidth, alignment: .trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 }
 
                 // Bottom row: full-width scrubber spans the entire bar.
@@ -328,6 +330,7 @@ struct BottomPlayerBar_Mac: View {
                 .help("Downloading…")
         } else if isDownloaded {
             iconButton("checkmark.circle.fill",
+                       label: "Downloaded",
                        active: true,
                        help: "Downloaded — click to remove") {
                 guard let id = player.current?.Id else { return }
@@ -335,6 +338,7 @@ struct BottomPlayerBar_Mac: View {
             }
         } else {
             iconButton("arrow.down.circle",
+                       label: "Download",
                        help: "Download") {
                 guard let cur = player.current,
                       let url = auth.serverURL else { return }
@@ -399,15 +403,11 @@ struct BottomPlayerBar_Mac: View {
     }
 
     private func iconButton(_ icon: String,
+                            label: String,
                             active: Bool = false,
                             help: String,
                             action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .foregroundStyle(active ? Color.accentColor : Color.secondary)
-        }
-        .buttonStyle(.plain)
-        .help(help)
+        PlayerControlButton_Mac(icon: icon, label: label, help: help, active: active, action: action)
     }
 
     private func toggleFavorite() {
@@ -432,9 +432,9 @@ struct BottomPlayerBar_Mac: View {
         let safeCur = clock.currentTime.isFinite ? clock.currentTime : 0
         HStack(spacing: 6) {
             Text(min(isScrubbing ? scrub : safeCur, safeDur).mmSS)
-                .font(.caption.monospacedDigit())
+                .font(.system(size: 10 * scale).monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 34, alignment: .trailing)
+                .frame(width: 34 * scale, alignment: .trailing)
             Slider(value: Binding(
                 get: {
                     let raw = isScrubbing ? scrub : safeCur
@@ -454,24 +454,112 @@ struct BottomPlayerBar_Mac: View {
                     }
                 }
             })
-            .controlSize(.small)
+            .controlSize(scale > 1.1 ? .regular : .small)
             .disabled(player.current == nil)
             Text(safeDur.mmSS)
-                .font(.caption.monospacedDigit())
+                .font(.system(size: 10 * scale).monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 34, alignment: .leading)
+                .frame(width: 34 * scale, alignment: .leading)
         }
         .frame(maxWidth: .infinity)
     }
 
-    private func transportButton(_ icon: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .foregroundStyle(active ? Color.accentColor : Color.secondary)
-        }
-        .buttonStyle(.plain)
+    private func transportButton(_ icon: String, label: String, active: Bool, action: @escaping () -> Void) -> some View {
+        PlayerControlButton_Mac(icon: icon, label: label, active: active, action: action)
     }
 
+}
+
+// MARK: - Accessibility (macOS)
+
+/// Mac accessibility settings (Settings > General > Accessibility, plus the
+/// View menu's size commands).
+enum MacA11y {
+    /// Interface scale for the player bar and full-screen player controls.
+    static let scaleKey = "bolera.mac.uiScale"
+    /// Colour vision mode (`ColourMode` raw value): swaps the accent colour
+    /// for one that stays distinct under that colour-vision deficiency.
+    static let colourModeKey = ColourVisionMode.storageKey
+    /// Show a text label under each player control.
+    static let labelsKey = "bolera.mac.controlLabels"
+
+    static let scales: [Double] = [1.0, 1.25, 1.5]
+    static func name(for scale: Double) -> String {
+        switch scale {
+        case ..<1.1: return "Default"
+        case ..<1.4: return "Large"
+        default: return "Extra Large"
+        }
+    }
+    /// Colour vision modes live in BoleraCore (shared with iOS).
+    typealias ColourMode = ColourVisionMode
+
+    static var colourMode: ColourMode { ColourVisionMode.current }
+    /// The app's accent under the current colour mode. Use instead of
+    /// `Color.accentColor`, which always resolves to the asset purple.
+    static var accent: Color { colourMode.accent }
+    /// Readable text colour for content drawn on `accent`.
+    static var onAccent: Color { colourMode.onAccent }
+
+    /// Next scale step up (+1) or down (-1), clamped to the available sizes.
+    static func step(_ current: Double, by delta: Int) -> Double {
+        let i = scales.firstIndex { abs($0 - current) < 0.01 } ?? 0
+        return scales[max(0, min(scales.count - 1, i + delta))]
+    }
+}
+
+/// A player control: SF Symbol plus an optional label underneath, following
+/// the accessibility settings (scale, colour mode, labels). Idle controls draw
+/// in full colour with a generous click area. `tint` overrides the idle colour
+/// (the full-screen player draws white on artwork).
+struct PlayerControlButton_Mac: View {
+    let icon: String
+    let label: String
+    var help: String? = nil
+    var active: Bool = false
+    var size: CGFloat = 13
+    var tint: Color? = nil
+    let action: () -> Void
+
+    @AppStorage(MacA11y.scaleKey) private var scale = 1.0
+    @AppStorage(MacA11y.labelsKey) private var labels = false
+    @AppStorage(MacA11y.colourModeKey) private var colourModeRaw = MacA11y.ColourMode.standard.rawValue
+
+    private var mode: MacA11y.ColourMode { MacA11y.ColourMode(rawValue: colourModeRaw) ?? .standard }
+    private var color: Color {
+        if active { return mode.accent }
+        return tint ?? .primary
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Image(systemName: icon)
+                    .font(.system(size: size * scale))
+                    .foregroundStyle(color)
+                if labels {
+                    Text(label)
+                        .font(.system(size: 9 * scale))
+                        .foregroundStyle(color)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                if mode.showsActiveIndicator {
+                    // Non-colour "on" cue; kept in layout when off so toggling
+                    // doesn't shift the bar.
+                    Circle()
+                        .fill(color)
+                        .frame(width: 4 * scale, height: 4 * scale)
+                        .opacity(active ? 1 : 0)
+                }
+            }
+            .frame(minWidth: 26 * scale, minHeight: 26 * scale)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help ?? label)
+        .accessibilityLabel(label)
+    }
 }
 
 /// Settings key: show the volume slider permanently instead of behind a
@@ -486,11 +574,13 @@ let inlineVolumeSliderKey = "bolera.mac.inlineVolumeSlider"
 struct VolumeControl_Mac: View {
     @EnvironmentObject var player: AudioPlayer
     @AppStorage(inlineVolumeSliderKey) private var inline = false
+    @AppStorage(MacA11y.scaleKey) private var scale = 1.0
     @State private var showPopover = false
     var sliderWidth: CGFloat = 80
-    /// Icon colour; the full-screen player draws on artwork, so it passes white.
-    var iconColor: Color = .secondary
-    var iconFont: Font = .body
+    /// Icon size before scaling.
+    var size: CGFloat = 13
+    /// Idle icon colour override; the full-screen player passes white.
+    var tint: Color? = nil
 
     private var icon: String {
         if player.isMuted || player.volume == 0 { return "speaker.slash.fill" }
@@ -504,7 +594,7 @@ struct VolumeControl_Mac: View {
             HStack(spacing: 6) {
                 speakerButton(action: toggleMute)
                     .help(player.isMuted ? "Unmute" : "Mute")
-                slider.frame(width: sliderWidth)
+                slider.frame(width: sliderWidth * scale)
             }
         } else {
             speakerButton { showPopover.toggle() }
@@ -529,14 +619,9 @@ struct VolumeControl_Mac: View {
     }
 
     private func speakerButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(iconFont)
-                .foregroundStyle(iconColor)
-                // Fixed width so neighbours don't shift as the wave count changes.
-                .frame(width: 22, alignment: .leading)
-        }
-        .buttonStyle(.plain)
+        // Fixed-width icon so neighbours don't shift as the wave count changes.
+        PlayerControlButton_Mac(icon: icon, label: "Volume", size: size, tint: tint, action: action)
+            .frame(minWidth: 24 * scale)
     }
 
     private var slider: some View {
@@ -547,7 +632,7 @@ struct VolumeControl_Mac: View {
                 if player.isMuted && v > 0 { player.isMuted = false }
             }
         ), in: 0...1)
-        .controlSize(.small)
+        .controlSize(scale > 1.1 ? .regular : .small)
         .help("Volume")
     }
 
@@ -587,9 +672,9 @@ struct MicroPlayer_Mac: View {
         ZStack {
             Color.black
             if let art {
-                Image(nsImage: art).resizable().scaledToFill()
+                Image(artwork: art).resizable().scaledToFill()
             } else {
-                LinearGradient(colors: [Color.accentColor.opacity(0.5), .black],
+                LinearGradient(colors: [MacA11y.accent.opacity(0.5), .black],
                                startPoint: .topLeading, endPoint: .bottomTrailing)
                     .overlay(Image(systemName: "music.note")
                         .font(.system(size: 44)).foregroundStyle(.white.opacity(0.6)))

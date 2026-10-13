@@ -43,7 +43,7 @@ struct JellyfinImage: View {
                 // frame (a non-square cover would otherwise overflow the tile).
                 Color.clear
                     .overlay {
-                        Image(uiImage: image)
+                        Image(artwork: image)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                     }
@@ -110,7 +110,7 @@ struct NowPlayingIndexMarker: View {
         if player.current?.Id == trackId {
             Image(systemName: "speaker.wave.2.fill")
                 .font(.caption)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(Color.boleraAccent)
         } else {
             Text("\(index)")
                 .font(.callout)

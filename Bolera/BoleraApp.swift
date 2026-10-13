@@ -34,6 +34,7 @@ struct BoleraApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .boleraColourVision()
                 .environmentObject(auth)
                 .environmentObject(player)
                 .environmentObject(library)
@@ -107,7 +108,7 @@ struct LibraryPrefetchView: View {
                     .font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center).padding(.horizontal, 32)
                 ProgressView(value: prefetcher.progress)
-                    .tint(.accentColor)
+                    .tint(Color.boleraAccent)
                     .padding(.horizontal, 40)
                 Text("\(Int(prefetcher.progress * 100))%")
                     .font(.caption).foregroundStyle(.secondary)

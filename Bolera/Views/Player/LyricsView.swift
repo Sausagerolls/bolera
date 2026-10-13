@@ -54,7 +54,7 @@ struct LyricsView: View {
     private var backdrop: some View {
         ZStack {
             if let art = player.artwork {
-                Image(uiImage: art).resizable().scaledToFill().blur(radius: 80).opacity(0.7).ignoresSafeArea()
+                Image(artwork: art).resizable().scaledToFill().blur(radius: 80).opacity(0.7).ignoresSafeArea()
             } else {
                 Color.black.ignoresSafeArea()
             }

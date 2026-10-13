@@ -119,24 +119,20 @@ struct HomeView: View {
             HStack(spacing: 14) {
                 Image(systemName: "wand.and.stars")
                     .font(.title2)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.onBoleraAccent)
                     .frame(width: 44, height: 44)
-                    .background(.white.opacity(0.18), in: Circle())
+                    .background(Color.onBoleraAccent.opacity(0.15), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Make a Mix").font(.headline).foregroundStyle(.white)
+                    Text("Make a Mix").font(.headline).foregroundStyle(Color.onBoleraAccent)
                     Text("Describe a mood, get a playlist")
-                        .font(.caption).foregroundStyle(.white.opacity(0.85))
+                        .font(.caption).foregroundStyle(Color.onBoleraAccent.opacity(0.85))
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(Color.onBoleraAccent.opacity(0.7))
             }
             .padding(16)
-            .background(
-                LinearGradient(colors: [Color.accentColor, Color.purple, Color.indigo],
-                               startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: 14)
-            )
+            .background(makeAMixBackground, in: RoundedRectangle(cornerRadius: 14))
             .padding(.horizontal)
         }
         .buttonStyle(.plain)
@@ -175,6 +171,19 @@ struct HomeView: View {
     }
 
     // MARK: - Daily section
+
+    /// Standard keeps the purple→indigo sweep under white text. The colour
+    /// vision modes use their (light) accent, darkened slightly toward the
+    /// corner, under dark text — sweeping into purple/indigo there would put
+    /// colours the mode is avoiding behind text that can't contrast with both.
+    private var makeAMixBackground: LinearGradient {
+        if ColourVisionMode.current == .standard {
+            return LinearGradient(colors: [Color.boleraAccent, Color.purple, Color.indigo],
+                                  startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+        return LinearGradient(colors: [Color.boleraAccent, Color.boleraAccent.opacity(0.82)],
+                              startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
 
     private var dailySection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -441,15 +450,16 @@ struct DailyPlaylistTile: View {
         } label: {
             ZStack(alignment: .bottomLeading) {
                 if let img = daily.artworkByPlaylist[playlist.id] {
-                    Image(uiImage: img)
+                    Image(artwork: img)
                         .resizable()
                         .scaledToFill()
                 } else {
-                    LinearGradient(colors: [Color.accentColor.opacity(0.4), .black.opacity(0.7)],
+                    LinearGradient(colors: [Color.boleraAccent.opacity(0.4), .black.opacity(0.7)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
                     Text(playlist.name)
                         .font(.headline)
                         .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.7), radius: 3)
                         .padding(12)
                 }
             }
@@ -501,9 +511,9 @@ struct DailyMixesListView: View {
         HStack(spacing: 12) {
             Group {
                 if let img = daily.artworkByPlaylist[mix.id] {
-                    Image(uiImage: img).resizable().scaledToFill()
+                    Image(artwork: img).resizable().scaledToFill()
                 } else {
-                    LinearGradient(colors: [Color.accentColor.opacity(0.4), .black.opacity(0.6)],
+                    LinearGradient(colors: [Color.boleraAccent.opacity(0.4), .black.opacity(0.6)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
                 }
             }

@@ -36,7 +36,7 @@ struct QueueView: View {
                             }
                             Spacer()
                             if idx == currentIndex {
-                                Image(systemName: "speaker.wave.2.fill").foregroundStyle(Color.accentColor)
+                                Image(systemName: "speaker.wave.2.fill").foregroundStyle(Color.boleraAccent)
                             }
                         }
                         .contentShape(Rectangle())

@@ -30,7 +30,7 @@ struct AlbumDetailView: View {
                     } label: {
                         Label("Play", systemImage: "play.fill")
                             .frame(maxWidth: .infinity).padding(.vertical, 10)
-                            .background(Color.accentColor).foregroundStyle(.white)
+                            .background(Color.boleraAccent).foregroundStyle(Color.onBoleraAccent)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     Button {
@@ -61,7 +61,7 @@ struct AlbumDetailView: View {
                     VStack(spacing: 6) {
                         Label(allDownloadedLabel, systemImage: "arrow.down.circle")
                         if let p = albumProgress {
-                            ProgressView(value: p).tint(.accentColor)
+                            ProgressView(value: p).tint(Color.boleraAccent)
                         }
                     }
                     .frame(maxWidth: .infinity)

@@ -22,11 +22,11 @@ struct MenuBarPlayer_Mac: View {
                 Button { player.next() } label: { Image(systemName: "forward.fill") }
                 Spacer()
                 Button { player.toggleShuffle() } label: {
-                    Image(systemName: "shuffle").foregroundStyle(player.shuffle ? Color.accentColor : Color.secondary)
+                    Image(systemName: "shuffle").foregroundStyle(player.shuffle ? MacA11y.accent : Color.secondary)
                 }
                 Button { player.cycleRepeatMode() } label: {
                     Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                        .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.accentColor)
+                        .foregroundStyle(player.repeatMode == .off ? Color.secondary : MacA11y.accent)
                 }
             }
             .buttonStyle(.borderless)

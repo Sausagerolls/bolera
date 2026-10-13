@@ -102,14 +102,14 @@ struct PaywallView: View {
         } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.accentColor)
+                    .fill(Color.boleraAccent)
                     .frame(height: 56)
                 if pro.purchaseInFlight {
-                    ProgressView().tint(.white)
+                    ProgressView().tint(Color.onBoleraAccent)
                 } else if let p = product {
                     Text("Unlock — \(p.displayPrice)")
                         .font(.headline)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.onBoleraAccent)
                 } else {
                     Text("Loading…")
                         .foregroundStyle(.white.opacity(0.7))

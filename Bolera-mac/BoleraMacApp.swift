@@ -17,6 +17,7 @@ struct BoleraMacApp: App {
     @StateObject private var nav = MacNavCoordinator()
 
     @State private var showPaywall = false
+    @AppStorage(MacA11y.scaleKey) private var uiScale = 1.0
     @Environment(\.openWindow) private var openWindow
 
     init() {
@@ -32,6 +33,7 @@ struct BoleraMacApp: App {
     var body: some Scene {
         WindowGroup("Bolera", id: "main") {
             RootView_Mac()
+                .boleraColourVision()
                 .frame(minWidth: nav.microPlayer ? 200 : 960,
                        minHeight: nav.microPlayer ? 200 : 600)
                 .environmentObject(auth)
@@ -64,6 +66,31 @@ struct BoleraMacApp: App {
                     .keyboardShortcut("s", modifiers: [.command, .shift])
                 Button("Cycle Repeat") { player.cycleRepeatMode() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
+                Divider()
+                Button("Volume Up") {
+                    player.isMuted = false
+                    player.volume = min(1, player.volume + 0.1)
+                }
+                .keyboardShortcut(.upArrow, modifiers: .command)
+                Button("Volume Down") { player.volume = max(0, player.volume - 0.1) }
+                    .keyboardShortcut(.downArrow, modifiers: .command)
+                Button(player.isMuted ? "Unmute" : "Mute") { player.isMuted.toggle() }
+                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+            }
+            // Interface size for the player controls (Settings > General >
+            // Accessibility holds the same setting).
+            CommandGroup(after: .toolbar) {
+                Divider()
+                // "=" is the unshifted +/= key, so ⌘ plus that key works
+                // without Shift (the same key Safari's zoom listens for).
+                Button("Make Controls Larger") { uiScale = MacA11y.step(uiScale, by: 1) }
+                    .keyboardShortcut("=", modifiers: .command)
+                    .disabled(uiScale >= MacA11y.scales.last! - 0.01)
+                Button("Make Controls Smaller") { uiScale = MacA11y.step(uiScale, by: -1) }
+                    .keyboardShortcut("-", modifiers: .command)
+                    .disabled(uiScale <= MacA11y.scales.first! + 0.01)
+                Button("Default Control Size") { uiScale = 1.0 }
+                    .keyboardShortcut("0", modifiers: .command)
             }
             CommandGroup(after: .windowArrangement) {
                 Divider()
@@ -80,6 +107,7 @@ struct BoleraMacApp: App {
 
         Settings {
             SettingsWindow_Mac()
+                .boleraColourVision()
                 .environmentObject(auth)
                 .environmentObject(player)
                 .environmentObject(pro)
@@ -90,6 +118,7 @@ struct BoleraMacApp: App {
 
         WindowGroup("Equalizer", id: "eq") {
             EQWindow_Mac()
+                .boleraColourVision()
                 .environmentObject(pro)
                 .preferredColorScheme(.dark)
         }
@@ -98,6 +127,7 @@ struct BoleraMacApp: App {
 
         WindowGroup("Now Playing", id: "now-playing") {
             NowPlayingPane_Mac()
+                .boleraColourVision()
                 .frame(minWidth: 420, minHeight: 600)
                 .environmentObject(auth)
                 .environmentObject(player)
@@ -113,6 +143,7 @@ struct BoleraMacApp: App {
 
         MenuBarExtra("Bolera", systemImage: menuBarIcon) {
             MenuBarPlayer_Mac()
+                .boleraColourVision()
                 .environmentObject(player)
                 .environmentObject(auth)
                 .frame(width: 320)
@@ -175,7 +206,7 @@ struct LibraryPrefetchView_Mac: View {
                     .font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center).frame(maxWidth: 420)
                 ProgressView(value: prefetcher.progress)
-                    .tint(.accentColor).frame(maxWidth: 360)
+                    .tint(MacA11y.accent).frame(maxWidth: 360)
                 Text("\(Int(prefetcher.progress * 100))%")
                     .font(.caption).foregroundStyle(.secondary)
                 Button(prefetcher.progress >= 1 ? "Continue" : "Skip for now") { onFinish() }

@@ -5,6 +5,7 @@ import BoleraCore
 /// Top: handle (close + title + queue). Middle: artwork (tap → visualizer).
 /// Then track info, action row, scrubber, controls, bottom bar.
 struct ImmersivePlayer_Mac: View {
+    @AppStorage(MacA11y.scaleKey) private var uiScale = 1.0
     @EnvironmentObject var player: AudioPlayer
     @EnvironmentObject var auth: AuthManager
     // `AudioPlayer.currentTime` is intentionally NOT @Published (avoids 2Hz
@@ -117,7 +118,7 @@ struct ImmersivePlayer_Mac: View {
     private var backdrop: some View {
         ZStack {
             if let artwork {
-                Image(nsImage: artwork)
+                Image(artwork: artwork)
                     .resizable()
                     .scaledToFill()
                     .blur(radius: 80, opaque: true)
@@ -243,7 +244,7 @@ struct ImmersivePlayer_Mac: View {
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                         .shadow(color: .black.opacity(0.6), radius: 20, y: 10)
                 } else if let artwork {
-                    Image(nsImage: artwork)
+                    Image(artwork: artwork)
                         .resizable()
                         .scaledToFit()
                         .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -389,32 +390,31 @@ struct ImmersivePlayer_Mac: View {
     // MARK: - Transport controls (with inline lyrics/sleep/download)
 
     private var controls: some View {
-        HStack(spacing: 22) {
-            VolumeControl_Mac(sliderWidth: 90, iconColor: .white, iconFont: .title3)
-            iconButton("text.quote", help: "Lyrics") { showLyrics = true }
-            iconButton(sleepIcon, help: sleepLabel,
+        HStack(spacing: 22 * uiScale) {
+            VolumeControl_Mac(sliderWidth: 90, size: 20, tint: .white)
+            iconButton("text.quote", label: "Lyrics", help: "Lyrics") { showLyrics = true }
+            iconButton(sleepIcon, label: "Sleep", help: sleepLabel,
                        active: sleepTimer.mode != .off) { showSleepSheet = true }
-            iconButton("shuffle", help: "Shuffle",
+            iconButton("shuffle", label: "Shuffle", help: "Shuffle",
                        active: player.shuffle) { player.toggleShuffle() }
-            iconButton("backward.fill", help: "Previous", large: true) { player.previous() }
-            Button { player.togglePlayPause() } label: {
-                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.space, modifiers: [])
-            iconButton("forward.fill", help: "Next", large: true) { player.next() }
+            iconButton("backward.fill", label: "Previous", help: "Previous", large: true) { player.previous() }
+            PlayerControlButton_Mac(icon: player.isPlaying ? "pause.circle.fill" : "play.circle.fill",
+                                    label: player.isPlaying ? "Pause" : "Play",
+                                    size: 56, tint: .white) { player.togglePlayPause() }
+                .keyboardShortcut(.space, modifiers: [])
+            iconButton("forward.fill", label: "Next", help: "Next", large: true) { player.next() }
             iconButton(player.repeatMode == .one ? "repeat.1" : "repeat",
-                       help: "Repeat",
+                       label: "Repeat", help: "Repeat",
                        active: player.repeatMode != .off) { player.cycleRepeatMode() }
-            iconButton(downloadIcon, help: downloadLabel,
+            iconButton(downloadIcon, label: "Download", help: downloadLabel,
                        active: isDownloaded) { toggleDownload() }
             iconButton(isFavorite ? "heart.fill" : "heart",
+                       label: "Favourite",
                        help: isFavorite ? "Remove from Favorites" : "Add to Favorites",
                        active: isFavorite) { favoriteToggle() }
             if proStore.isPro {
                 iconButton("hand.raised.slash.fill",
+                           label: "Ignore",
                            help: "Skip & Ignore — never auto-play again") {
                     skipAndIgnore()
                 }
@@ -429,20 +429,17 @@ struct ImmersivePlayer_Mac: View {
         player.next()
     }
 
-    @ViewBuilder
+    /// White-on-artwork control; sizes match the old .title2 (22pt) /
+    /// .title3 (20pt) icons in 36/30pt frames, scaled by the interface size.
     private func iconButton(_ icon: String,
+                            label: String,
                             help: String,
                             active: Bool = false,
                             large: Bool = false,
                             action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(large ? .title2 : .title3)
-                .foregroundStyle(active ? Color.accentColor : .white)
-                .frame(width: large ? 36 : 30, height: large ? 36 : 30)
-        }
-        .buttonStyle(.plain)
-        .help(help)
+        PlayerControlButton_Mac(icon: icon, label: label, help: help, active: active,
+                                size: large ? 22 : 20, tint: .white, action: action)
+            .frame(minWidth: (large ? 36 : 30) * uiScale, minHeight: (large ? 36 : 30) * uiScale)
     }
 
     // MARK: - Bottom bar (airplay placeholder, album, queue)
@@ -619,7 +616,7 @@ enum Visualizers_Mac {
             let x = originX + CGFloat(i) * (barWidth + gap)
             let rect = CGRect(x: x, y: centerY - h / 2, width: barWidth, height: h)
             let path = Path(roundedRect: rect, cornerRadius: barWidth / 2)
-            let g = Gradient(colors: [Color.accentColor, Color.accentColor.opacity(0.4)])
+            let g = Gradient(colors: [MacA11y.accent, MacA11y.accent.opacity(0.4)])
             gfx.fill(path, with: .linearGradient(g,
                                                  startPoint: CGPoint(x: rect.midX, y: rect.minY),
                                                  endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
@@ -662,7 +659,7 @@ enum Visualizers_Mac {
             }
             let alpha = 0.85 - Double(layer) * 0.25
             gfx.stroke(path,
-                       with: .color(Color.accentColor.opacity(alpha)),
+                       with: .color(MacA11y.accent.opacity(alpha)),
                        style: StrokeStyle(lineWidth: 3 - CGFloat(layer) * 0.6, lineCap: .round))
         }
     }
@@ -686,7 +683,7 @@ enum Visualizers_Mac {
             path.addLine(to: p1)
             let alpha = 0.55 + Double(level) * 0.45
             gfx.stroke(path,
-                       with: .color(Color.accentColor.opacity(alpha)),
+                       with: .color(MacA11y.accent.opacity(alpha)),
                        style: StrokeStyle(lineWidth: 3, lineCap: .round))
         }
         let ring = Path(ellipseIn: CGRect(x: center.x - baseR, y: center.y - baseR,
@@ -705,13 +702,13 @@ enum Visualizers_Mac {
             let alpha = 0.45 * (1.0 - Double(phase.truncatingRemainder(dividingBy: 1.0)))
             let rect = CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
             gfx.stroke(Path(ellipseIn: rect),
-                       with: .color(Color.accentColor.opacity(alpha)),
+                       with: .color(MacA11y.accent.opacity(alpha)),
                        lineWidth: 2)
         }
         let coreR = max(12, 18 + amp * 60)
         let coreRect = CGRect(x: center.x - coreR, y: center.y - coreR,
                               width: coreR * 2, height: coreR * 2)
-        let g = Gradient(colors: [Color.accentColor, Color.accentColor.opacity(0)])
+        let g = Gradient(colors: [MacA11y.accent, MacA11y.accent.opacity(0)])
         gfx.fill(Path(ellipseIn: coreRect),
                  with: .radialGradient(g,
                                        center: center,
@@ -732,7 +729,7 @@ enum Visualizers_Mac {
             let x = originX + CGFloat(i) * (barWidth + gap)
             let top = CGRect(x: x, y: centerY - h, width: barWidth, height: h)
             let bot = CGRect(x: x, y: centerY,     width: barWidth, height: h)
-            let g = Gradient(colors: [Color.accentColor, Color.accentColor.opacity(0.2)])
+            let g = Gradient(colors: [MacA11y.accent, MacA11y.accent.opacity(0.2)])
             gfx.fill(Path(roundedRect: top, cornerRadius: barWidth / 2),
                      with: .linearGradient(g,
                                            startPoint: CGPoint(x: top.midX, y: top.minY),

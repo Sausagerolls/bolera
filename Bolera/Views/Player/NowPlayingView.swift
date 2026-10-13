@@ -174,7 +174,7 @@ struct NowPlayingContent: View {
     private var backdrop: some View {
         ZStack {
             if let art = player.artwork {
-                Image(uiImage: art)
+                Image(artwork: art)
                     .resizable()
                     .scaledToFill()
                     .blur(radius: 80)
@@ -210,7 +210,7 @@ struct NowPlayingContent: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                     .shadow(color: .black.opacity(0.6), radius: 20, y: 10)
             } else if let art = player.artwork {
-                Image(uiImage: art).resizable().scaledToFit()
+                Image(artwork: art).resizable().scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                     .shadow(color: .black.opacity(0.6), radius: 20, y: 10)
             } else {
@@ -320,7 +320,7 @@ struct NowPlayingContent: View {
     private var controls: some View {
         HStack(spacing: 30) {
             Button { player.toggleShuffle() } label: {
-                Image(systemName: "shuffle").foregroundStyle(player.shuffle ? Color.accentColor : .primary)
+                Image(systemName: "shuffle").foregroundStyle(player.shuffle ? Color.boleraAccent : .primary)
             }
             Button { player.previous() } label: { Image(systemName: "backward.fill").font(.title) }
             Button { player.togglePlayPause() } label: {
@@ -333,7 +333,7 @@ struct NowPlayingContent: View {
             }
             Button { player.next() } label: { Image(systemName: "forward.fill").font(.title) }
             Button { player.cycleRepeatMode() } label: {
-                Image(systemName: repeatIcon).foregroundStyle(player.repeatMode == .off ? .primary : Color.accentColor)
+                Image(systemName: repeatIcon).foregroundStyle(player.repeatMode == .off ? .primary : Color.boleraAccent)
             }
         }
         .buttonStyle(.plain)
@@ -376,12 +376,12 @@ struct NowPlayingContent: View {
             Spacer()
             Button { showSleepSheet = true } label: {
                 Image(systemName: sleepIcon)
-                    .foregroundStyle(sleepTimer.mode != .off ? Color.accentColor : .primary)
+                    .foregroundStyle(sleepTimer.mode != .off ? Color.boleraAccent : .primary)
             }
             Spacer()
             Button { downloadCurrent() } label: {
                 Image(systemName: downloadIcon)
-                    .foregroundStyle(isDownloaded ? Color.accentColor : .primary)
+                    .foregroundStyle(isDownloaded ? Color.boleraAccent : .primary)
             }
             Spacer()
             Button { showQueue = true } label: {
@@ -406,7 +406,7 @@ struct AirPlayButton: UIViewRepresentable {
     func makeUIView(context: Context) -> AVRoutePickerView {
         let v = AVRoutePickerView()
         v.tintColor = .label
-        v.activeTintColor = UIColor(Color.accentColor)
+        v.activeTintColor = UIColor(Color.boleraAccent)
         v.prioritizesVideoDevices = false
         return v
     }
@@ -939,7 +939,7 @@ enum Visualizers {
             let x = originX + CGFloat(i) * (barWidth + gap)
             let rect = CGRect(x: x, y: centerY - h / 2, width: barWidth, height: h)
             let path = Path(roundedRect: rect, cornerRadius: barWidth / 2)
-            let g = Gradient(colors: [Color.accentColor, Color.accentColor.opacity(0.4)])
+            let g = Gradient(colors: [Color.boleraAccent, Color.boleraAccent.opacity(0.4)])
             gfx.fill(path, with: .linearGradient(g,
                                                  startPoint: CGPoint(x: rect.midX, y: rect.minY),
                                                  endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
@@ -984,7 +984,7 @@ enum Visualizers {
             }
             let alpha = 0.85 - Double(layer) * 0.25
             gfx.stroke(path,
-                       with: .color(Color.accentColor.opacity(alpha)),
+                       with: .color(Color.boleraAccent.opacity(alpha)),
                        style: StrokeStyle(lineWidth: 3 - CGFloat(layer) * 0.6, lineCap: .round))
         }
     }
@@ -1010,7 +1010,7 @@ enum Visualizers {
             path.addLine(to: p1)
             let alpha = 0.55 + Double(level) * 0.45
             gfx.stroke(path,
-                       with: .color(Color.accentColor.opacity(alpha)),
+                       with: .color(Color.boleraAccent.opacity(alpha)),
                        style: StrokeStyle(lineWidth: 3, lineCap: .round))
         }
         // Inner halo ring
@@ -1032,14 +1032,14 @@ enum Visualizers {
             let alpha = 0.45 * (1.0 - Double(phase.truncatingRemainder(dividingBy: 1.0)))
             let rect = CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
             gfx.stroke(Path(ellipseIn: rect),
-                       with: .color(Color.accentColor.opacity(alpha)),
+                       with: .color(Color.boleraAccent.opacity(alpha)),
                        lineWidth: 2)
         }
         // Center disc — scales with amplitude
         let coreR = max(12, 18 + amp * 60)
         let coreRect = CGRect(x: center.x - coreR, y: center.y - coreR,
                               width: coreR * 2, height: coreR * 2)
-        let g = Gradient(colors: [Color.accentColor, Color.accentColor.opacity(0)])
+        let g = Gradient(colors: [Color.boleraAccent, Color.boleraAccent.opacity(0)])
         gfx.fill(Path(ellipseIn: coreRect),
                  with: .radialGradient(g,
                                        center: center,
@@ -1063,7 +1063,7 @@ enum Visualizers {
             // Top bar
             let top = CGRect(x: x, y: centerY - h, width: barWidth, height: h)
             let bot = CGRect(x: x, y: centerY,     width: barWidth, height: h)
-            let g = Gradient(colors: [Color.accentColor, Color.accentColor.opacity(0.2)])
+            let g = Gradient(colors: [Color.boleraAccent, Color.boleraAccent.opacity(0.2)])
             gfx.fill(Path(roundedRect: top, cornerRadius: barWidth / 2),
                      with: .linearGradient(g,
                                            startPoint: CGPoint(x: top.midX, y: top.minY),

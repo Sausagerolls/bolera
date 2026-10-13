@@ -39,7 +39,7 @@ struct SidebarView_Mac: View {
                     if showVisualiser {
                         InlineVisualizer_Mac().environmentObject(player)
                     } else if let albumArt {
-                        Image(nsImage: albumArt).resizable().scaledToFill()
+                        Image(artwork: albumArt).resizable().scaledToFill()
                     } else {
                         Rectangle().fill(Color.gray.opacity(0.2))
                             .overlay(Image(systemName: "music.note")
@@ -201,7 +201,7 @@ struct SidebarView_Mac: View {
     @ViewBuilder
     private var avatarView: some View {
         if let avatar {
-            Image(nsImage: avatar).resizable().scaledToFill()
+            Image(artwork: avatar).resizable().scaledToFill()
         } else {
             ZStack {
                 Color.gray.opacity(0.2)

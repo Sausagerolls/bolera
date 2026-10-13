@@ -21,7 +21,7 @@ struct PlaylistDetailView: View {
                     } label: {
                         Label("Play", systemImage: "play.fill")
                             .frame(maxWidth: .infinity).padding(.vertical, 10)
-                            .background(Color.accentColor).foregroundStyle(.white)
+                            .background(Color.boleraAccent).foregroundStyle(Color.onBoleraAccent)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     Button {
@@ -65,7 +65,7 @@ struct PlaylistDetailView: View {
                         Label(downloadLabel, systemImage: isFullyDownloaded ? "trash" : "arrow.down.circle")
                             .foregroundStyle(isFullyDownloaded ? Color.red : Color.primary)
                         if let p = downloadProgress {
-                            ProgressView(value: p).tint(.accentColor)
+                            ProgressView(value: p).tint(Color.boleraAccent)
                         }
                     }
                     .frame(maxWidth: .infinity)

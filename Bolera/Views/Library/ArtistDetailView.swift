@@ -33,8 +33,8 @@ struct ArtistDetailView: View {
                         Label("Play", systemImage: "play.fill")
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background(Color.accentColor)
-                            .foregroundStyle(.white)
+                            .background(Color.boleraAccent)
+                            .foregroundStyle(Color.onBoleraAccent)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     Button {
@@ -155,7 +155,7 @@ struct ArtistDetailView: View {
                             bioExpanded.toggle()
                         }
                         .font(.caption.bold())
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.boleraAccent)
                     }
                     .padding(.horizontal)
                 }

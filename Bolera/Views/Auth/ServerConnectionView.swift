@@ -81,14 +81,14 @@ struct ServerConnectionView: View {
                         Button(action: signIn) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.accentColor)
+                                    .fill(Color.boleraAccent)
                                     .frame(height: 50)
                                 if loading {
-                                    ProgressView().tint(.white)
+                                    ProgressView().tint(Color.onBoleraAccent)
                                 } else {
                                     Text("Sign In")
                                         .font(.headline)
-                                        .foregroundStyle(.white)
+                                        .foregroundStyle(Color.onBoleraAccent)
                                 }
                             }
                         }

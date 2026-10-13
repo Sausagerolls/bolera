@@ -122,26 +122,35 @@ private struct HomeContent_Mac: View {
             HStack(spacing: 14) {
                 Image(systemName: "wand.and.stars")
                     .font(.title2)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(MacA11y.onAccent)
                     .frame(width: 44, height: 44)
-                    .background(.white.opacity(0.18), in: Circle())
+                    .background(MacA11y.onAccent.opacity(0.15), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Make a Mix").font(.headline).foregroundStyle(.white)
+                    Text("Make a Mix").font(.headline).foregroundStyle(MacA11y.onAccent)
                     Text("Describe a mood, get a playlist")
-                        .font(.caption).foregroundStyle(.white.opacity(0.85))
+                        .font(.caption).foregroundStyle(MacA11y.onAccent.opacity(0.85))
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(MacA11y.onAccent.opacity(0.7))
             }
             .padding(16)
-            .background(
-                LinearGradient(colors: [Color.accentColor, Color.purple, Color.indigo],
-                               startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: 14)
-            )
+            .background(makeAMixBackground, in: RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+    }
+
+    /// Standard keeps the purple→indigo sweep under white text. The colour
+    /// vision modes use their (light) accent, darkened slightly toward the
+    /// corner, under dark text — sweeping into purple/indigo there would put
+    /// colours the mode is avoiding behind text that can't contrast with both.
+    private var makeAMixBackground: LinearGradient {
+        if MacA11y.colourMode == .standard {
+            return LinearGradient(colors: [MacA11y.accent, Color.purple, Color.indigo],
+                                  startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+        return LinearGradient(colors: [MacA11y.accent, MacA11y.accent.opacity(0.82)],
+                              startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     private var dailySection: some View {
@@ -264,7 +273,7 @@ struct MacTrackRow_Mac: View {
                 ZStack {
                     Color.white.opacity(0.06)
                     if let image {
-                        Image(nsImage: image).resizable().scaledToFill()
+                        Image(artwork: image).resizable().scaledToFill()
                     } else {
                         Image(systemName: "music.note")
                             .font(.caption).foregroundStyle(.secondary)
@@ -396,15 +405,16 @@ struct DailyPlaylistTile_Mac: View {
         } label: {
             ZStack(alignment: .bottomLeading) {
                 if let img = daily.artworkByPlaylist[playlist.id] {
-                    Image(nsImage: img)
+                    Image(artwork: img)
                         .resizable()
                         .scaledToFill()
                 } else {
-                    LinearGradient(colors: [Color.accentColor.opacity(0.4), .black.opacity(0.7)],
+                    LinearGradient(colors: [MacA11y.accent.opacity(0.4), .black.opacity(0.7)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
                     Text(playlist.name)
                         .font(.headline)
                         .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.7), radius: 3)
                         .padding(12)
                 }
             }
@@ -459,9 +469,9 @@ struct DailyMixesListView_Mac: View {
         HStack(spacing: 12) {
             Group {
                 if let img = daily.artworkByPlaylist[mix.id] {
-                    Image(nsImage: img).resizable().scaledToFill()
+                    Image(artwork: img).resizable().scaledToFill()
                 } else {
-                    LinearGradient(colors: [Color.accentColor.opacity(0.4), .black.opacity(0.6)],
+                    LinearGradient(colors: [MacA11y.accent.opacity(0.4), .black.opacity(0.6)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
                 }
             }
@@ -639,7 +649,7 @@ struct ArtistTile_Mac: View {
             VStack(alignment: .center, spacing: 6) {
                 ZStack {
                     if let image {
-                        Image(nsImage: image).resizable().scaledToFill()
+                        Image(artwork: image).resizable().scaledToFill()
                     } else if loadFailed {
                         Color.white.opacity(0.06)
                         Image(systemName: "music.mic")
@@ -714,7 +724,7 @@ struct AlbumTile_Mac: View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack {
                 if let image {
-                    Image(nsImage: image).resizable().scaledToFill()
+                    Image(artwork: image).resizable().scaledToFill()
                 } else if loadFailed {
                     Color.white.opacity(0.06)
                     Image(systemName: "opticaldisc")
@@ -1179,7 +1189,7 @@ private struct PlaylistDetail_Mac: View {
             ZStack {
                 Color.gray.opacity(0.15)
                 if let hero {
-                    Image(nsImage: hero).resizable().scaledToFill()
+                    Image(artwork: hero).resizable().scaledToFill()
                 } else {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 44)).foregroundStyle(.secondary)
@@ -1276,11 +1286,11 @@ private struct PlaylistTile_Mac: View {
                 ZStack {
                     Color.gray.opacity(0.15)
                     if let hero {
-                        Image(nsImage: hero).resizable().scaledToFill()
+                        Image(artwork: hero).resizable().scaledToFill()
                     } else if quadrants.count == 4 {
                         compositeGrid
                     } else if let first = quadrants.first {
-                        Image(nsImage: first).resizable().scaledToFill()
+                        Image(artwork: first).resizable().scaledToFill()
                     } else {
                         Image(systemName: "music.note.list")
                             .font(.system(size: 38))
@@ -1330,12 +1340,12 @@ private struct PlaylistTile_Mac: View {
     private var compositeGrid: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                Image(nsImage: quadrants[0]).resizable().scaledToFill()
-                Image(nsImage: quadrants[1]).resizable().scaledToFill()
+                Image(artwork: quadrants[0]).resizable().scaledToFill()
+                Image(artwork: quadrants[1]).resizable().scaledToFill()
             }
             HStack(spacing: 0) {
-                Image(nsImage: quadrants[2]).resizable().scaledToFill()
-                Image(nsImage: quadrants[3]).resizable().scaledToFill()
+                Image(artwork: quadrants[2]).resizable().scaledToFill()
+                Image(artwork: quadrants[3]).resizable().scaledToFill()
             }
         }
     }
@@ -1621,7 +1631,7 @@ private struct SongRow_Search: View {
                 ZStack {
                     Color.gray.opacity(0.15)
                     if let artwork {
-                        Image(nsImage: artwork).resizable().scaledToFill()
+                        Image(artwork: artwork).resizable().scaledToFill()
                     } else {
                         Image(systemName: "music.note").foregroundStyle(.secondary)
                     }
@@ -1671,7 +1681,7 @@ private struct PlaylistResultTile: View {
                 ZStack {
                     Color.gray.opacity(0.15)
                     if let artwork {
-                        Image(nsImage: artwork).resizable().scaledToFill()
+                        Image(artwork: artwork).resizable().scaledToFill()
                     } else {
                         Image(systemName: "music.note.list")
                             .font(.system(size: 38))

@@ -25,6 +25,11 @@ public final class ListenBrainzService: ObservableObject {
 
     public var isAuthenticated: Bool { token != nil }
 
+    /// Latest submission problem worth showing the user (e.g. an unverified
+    /// MetaBrainz email), cleared by the next accepted request. Without this a
+    /// rejected account looked connected while every listen silently failed.
+    @Published public private(set) var lastError: String?
+
     private let api = URL(string: "https://api.listenbrainz.org/1/")!
 
     public enum LBError: LocalizedError {
@@ -139,11 +144,13 @@ public final class ListenBrainzService: ObservableObject {
         username = v.user_name
         UserDefaults.standard.set(v.user_name, forKey: "listenbrainz.username")
         enabled = true
+        lastError = nil
         DebugLog.write("[ListenBrainz] signed in as \(v.user_name ?? "?")")
     }
 
     public func signOut() {
         token = nil
+        lastError = nil
         username = nil
         enabled = false
         Keychain.delete("listenbrainz.token")
@@ -174,7 +181,8 @@ public final class ListenBrainzService: ObservableObject {
         do {
             try await submit(Submission(listen_type: "single", payload: [listen]), token: token)
             if !pendingListens.isEmpty { await flushPending() }
-        } catch LBError.http(let code, let msg) where (400..<500).contains(code) && code != 429 {
+        } catch LBError.http(let code, let msg) where (400..<500).contains(code) && code != 429
+                                                      && !Self.isUnverifiedEmail(msg) {
             // Rejected (bad token, malformed listen) — retrying won't help.
             DebugLog.write("[ListenBrainz] listen rejected \(code): \(msg)")
         } catch {
@@ -219,6 +227,20 @@ public final class ListenBrainzService: ObservableObject {
                     submission_client_version: version)))
     }
 
+    /// ListenBrainz rejects every listen from an account whose email isn't
+    /// verified (401). That's fixable by the user, so those listens are queued
+    /// rather than dropped, and replayed once they verify.
+    private static func isUnverifiedEmail(_ message: String) -> Bool {
+        message.localizedCaseInsensitiveContains("verified email")
+    }
+
+    /// The `error` field of a ListenBrainz error body, or the raw body.
+    private static func serverMessage(_ data: Data) -> String {
+        struct Body: Decodable { let error: String? }
+        if let b = try? JSONDecoder().decode(Body.self, from: data), let e = b.error { return e }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
     private func submit(_ submission: Submission, token: String) async throws {
         var req = URLRequest(url: api.appendingPathComponent("submit-listens"))
         req.httpMethod = "POST"
@@ -229,7 +251,10 @@ public final class ListenBrainzService: ObservableObject {
         let (data, response) = try await URLSession.shared.data(for: req)
         let code = (response as? HTTPURLResponse)?.statusCode ?? -1
         guard (200..<300).contains(code) else {
-            throw LBError.http(code, String(data: data, encoding: .utf8) ?? "")
+            let msg = Self.serverMessage(data)
+            lastError = msg
+            throw LBError.http(code, msg)
         }
+        lastError = nil
     }
 }

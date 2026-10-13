@@ -94,6 +94,9 @@ struct ListenBrainzSettingsView: View {
                 Section("Account") {
                     LabeledContent("Signed in as", value: listenBrainz.username ?? "—")
                     Toggle("Submit listens", isOn: $listenBrainz.enabled)
+                    if let problem = listenBrainz.lastError {
+                        Text(problem).foregroundStyle(.red).font(.caption)
+                    }
                     Button("Sign Out", role: .destructive) { listenBrainz.signOut() }
                 }
             } else {

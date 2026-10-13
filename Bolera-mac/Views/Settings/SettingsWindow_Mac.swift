@@ -119,6 +119,9 @@ private struct ListenBrainzSettings_Mac: View {
             Section("Account") {
                 if listenBrainz.isAuthenticated {
                     LabeledContent("Signed in as", value: listenBrainz.username ?? "—")
+                    if let problem = listenBrainz.lastError {
+                        Text(problem).font(.caption).foregroundStyle(.red)
+                    }
                     Button("Sign Out", role: .destructive) { listenBrainz.signOut() }
                 } else {
                     SecureField("User token", text: $token)

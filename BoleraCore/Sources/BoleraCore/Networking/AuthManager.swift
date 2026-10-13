@@ -138,6 +138,10 @@ public final class AuthManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "lastfm.enabled")
         UserDefaults.standard.removeObject(forKey: "bolera.onboarding.lastfmSeen")
         Task { @MainActor in LastFmService.shared.signOut() }
+        Keychain.delete("listenbrainz.token")
+        UserDefaults.standard.removeObject(forKey: "listenbrainz.username")
+        UserDefaults.standard.removeObject(forKey: "listenbrainz.enabled")
+        Task { @MainActor in ListenBrainzService.shared.signOut() }
         // The library cache + artwork were just wiped, so the next login should
         // re-run the prefetch onboarding (and re-show the "Preparing your
         // library" screen). Clear the flags it gates on.

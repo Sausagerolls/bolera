@@ -12,6 +12,8 @@ struct SettingsWindow_Mac: View {
                 .tabItem { Label("Navigation", systemImage: "hand.draw") }
             LastFmSettings_Mac()
                 .tabItem { Label("Last.fm", systemImage: "waveform") }
+            ListenBrainzSettings_Mac()
+                .tabItem { Label("ListenBrainz", systemImage: "music.note.list") }
             ProSettings_Mac()
                 .tabItem { Label("Pro", systemImage: "star.fill") }
             AboutSettings_Mac()
@@ -99,6 +101,75 @@ private struct LastFmSettings_Mac: View {
             } catch {
                 await MainActor.run {
                     signingIn = false
+                    lastError = error.localizedDescription
+                }
+            }
+        }
+    }
+}
+
+private struct ListenBrainzSettings_Mac: View {
+    @ObservedObject private var listenBrainz = ListenBrainzService.shared
+    @State private var token: String = ""
+    @State private var connecting = false
+    @State private var lastError: String?
+
+    var body: some View {
+        Form {
+            Section("Account") {
+                if listenBrainz.isAuthenticated {
+                    LabeledContent("Signed in as", value: listenBrainz.username ?? "—")
+                    Button("Sign Out", role: .destructive) { listenBrainz.signOut() }
+                } else {
+                    SecureField("User token", text: $token)
+                        .textFieldStyle(.roundedBorder)
+                    Button {
+                        connect()
+                    } label: {
+                        if connecting {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("Connect ListenBrainz")
+                        }
+                    }
+                    .disabled(connecting || token.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Link("Find your user token at listenbrainz.org/settings",
+                         destination: URL(string: "https://listenbrainz.org/settings/")!)
+                        .font(.caption)
+                }
+                if let err = lastError {
+                    Text(err).font(.caption).foregroundStyle(.red)
+                }
+            }
+            Section("Listens") {
+                Toggle("Submit listens + send now-playing", isOn: $listenBrainz.enabled)
+                    .disabled(!listenBrainz.isAuthenticated)
+                Text("Tracks > 30s, submitted past 50% or 4 minutes. Offline listens are sent when you're back online.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                Text("If your Jellyfin server already has the ListenBrainz plugin enabled, leave this off — otherwise every listen is counted twice.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    private func connect() {
+        connecting = true
+        lastError = nil
+        let candidate = token
+        Task {
+            do {
+                try await listenBrainz.signIn(token: candidate)
+                await MainActor.run {
+                    connecting = false
+                    token = ""
+                }
+            } catch {
+                await MainActor.run {
+                    connecting = false
                     lastError = error.localizedDescription
                 }
             }

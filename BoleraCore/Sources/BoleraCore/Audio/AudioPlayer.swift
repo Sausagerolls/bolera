@@ -687,6 +687,8 @@ public final class AudioPlayer: NSObject, ObservableObject {
         updateNowPlaying()
         scheduleStartReport(for: item)
         Task { @MainActor in await LastFmService.shared.updateNowPlaying(item); hasUpdatedNowPlayingCurrent = true }
+        let lbClient = client
+        Task { @MainActor in await ListenBrainzService.shared.updateNowPlaying(item, client: lbClient) }
         maybeExtendQueue()       // endless-mix: top up the queue as it nears the end
         persistPlaybackState()   // remember the queue + new track for next launch
     }
@@ -928,6 +930,8 @@ public final class AudioPlayer: NSObject, ObservableObject {
             if duration > 30, currentTime >= cutoff, let startedAt = trackStartedAt {
                 hasScrobbledCurrent = true
                 Task { @MainActor in await LastFmService.shared.scrobble(cur, startedAt: startedAt) }
+                let lbClient = client
+                Task { @MainActor in await ListenBrainzService.shared.submitListen(cur, startedAt: startedAt, client: lbClient) }
             }
         }
         preloadNextIfNeeded()

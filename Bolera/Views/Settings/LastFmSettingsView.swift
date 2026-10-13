@@ -81,3 +81,64 @@ struct LastFmSettingsView: View {
         }
     }
 }
+
+struct ListenBrainzSettingsView: View {
+    @ObservedObject private var listenBrainz = ListenBrainzService.shared
+    @State private var token = ""
+    @State private var error: String?
+    @State private var working = false
+
+    var body: some View {
+        Form {
+            if listenBrainz.isAuthenticated {
+                Section("Account") {
+                    LabeledContent("Signed in as", value: listenBrainz.username ?? "—")
+                    Toggle("Submit listens", isOn: $listenBrainz.enabled)
+                    Button("Sign Out", role: .destructive) { listenBrainz.signOut() }
+                }
+            } else {
+                Section {
+                    SecureField("User token", text: $token)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    if let err = error {
+                        Text(err).foregroundStyle(.red).font(.caption)
+                    }
+                    Button(action: signIn) {
+                        if working { ProgressView() } else { Text("Connect") }
+                    }
+                    .disabled(working || token.trimmingCharacters(in: .whitespaces).isEmpty)
+                } header: {
+                    Text("Connect ListenBrainz")
+                } footer: {
+                    Link("Find your user token at listenbrainz.org/settings",
+                         destination: URL(string: "https://listenbrainz.org/settings/")!)
+                }
+            }
+
+            Section {
+                Text("Listens follow the same rules as Last.fm: the track must be longer than 30 seconds, and you must have played at least 50% of it (or 4 minutes, whichever comes first). Listens made offline are sent when you're back online.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("If your Jellyfin server already has the ListenBrainz plugin enabled, leave this off — otherwise every listen is counted twice.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("ListenBrainz")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func signIn() {
+        working = true
+        error = nil
+        let candidate = token
+        Task {
+            do {
+                try await listenBrainz.signIn(token: candidate)
+                await MainActor.run { self.token = "" }
+            } catch {
+                await MainActor.run { self.error = error.localizedDescription }
+            }
+            await MainActor.run { self.working = false }
+        }
+    }
+}

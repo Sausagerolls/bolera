@@ -602,6 +602,18 @@ public struct JellyfinClient {
         return (await albumIds, await artistIds)
     }
 
+    /// An item's external provider IDs (e.g. `MusicBrainzRecording`). Fetched on
+    /// demand because most track queries don't request the `ProviderIds` field.
+    /// Nil on failure — callers treat the IDs as optional extras.
+    public func providerIds(itemId: String) async -> [String: String]? {
+        struct Ids: Decodable { let ProviderIds: [String: String]? }
+        let q = [URLQueryItem(name: "Ids", value: itemId),
+                 URLQueryItem(name: "Fields", value: "ProviderIds")]
+        guard let req = try? request("Users/\(userId)/Items", query: q),
+              let res = try? await send(req, as: ItemsResponse<Ids>.self) else { return nil }
+        return res.Items.first?.ProviderIds
+    }
+
     /// All album-artist IDs with an album under `parentId`, paged until
     /// exhausted. Uses `/Artists/AlbumArtists` because MusicArtist items don't
     /// live inside a library folder: `Users/{id}/Items?IncludeItemTypes=

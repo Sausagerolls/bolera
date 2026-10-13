@@ -75,10 +75,15 @@ private struct SignInSettingsView: View {
                 } label: {
                     Label("Last.fm", systemImage: "waveform")
                 }
+                NavigationLink {
+                    ListenBrainzSettingsView()
+                } label: {
+                    Label("ListenBrainz", systemImage: "music.note.list")
+                }
             } header: {
                 Text("Connected Services")
             } footer: {
-                Text("Sign in to Last.fm to scrobble your plays and sharpen AI mix recommendations.")
+                Text("Sign in to Last.fm to scrobble your plays and sharpen AI mix recommendations. Connect ListenBrainz to log your listens there too.")
                     .font(.caption)
             }
         }

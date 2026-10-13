@@ -390,6 +390,7 @@ struct ImmersivePlayer_Mac: View {
 
     private var controls: some View {
         HStack(spacing: 22) {
+            VolumeControl_Mac(sliderWidth: 90, iconColor: .white, iconFont: .title3)
             iconButton("text.quote", help: "Lyrics") { showLyrics = true }
             iconButton(sleepIcon, help: sleepLabel,
                        active: sleepTimer.mode != .off) { showSleepSheet = true }

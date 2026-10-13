@@ -64,6 +64,21 @@ public final class AudioPlayer: NSObject, ObservableObject {
     @Published public var repeatMode: RepeatMode = .off {
         didSet { UserDefaults.standard.set(repeatMode.rawValue, forKey: "bolera.repeat") }
     }
+    /// In-app volume, 0…1, separate from the system volume. Persisted.
+    @Published public var volume: Double = 1 {
+        didSet {
+            UserDefaults.standard.set(volume, forKey: "bolera.volume")
+            applyVolume()
+        }
+    }
+    /// Mute keeps `volume` so unmuting restores the previous level. Persisted.
+    @Published public var isMuted: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isMuted, forKey: "bolera.muted")
+            applyVolume()
+        }
+    }
+    private func applyVolume() { engine.volume = isMuted ? 0 : Float(volume) }
 
     public var current: BaseItem? {
         guard queue.indices.contains(currentIndex) else { return nil }
@@ -208,6 +223,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // cause of any mid-track buffering rather than disabling pre-buffer.
         shuffle = UserDefaults.standard.bool(forKey: "bolera.shuffle")
         repeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "bolera.repeat")) ?? .off
+        if UserDefaults.standard.object(forKey: "bolera.volume") != nil {
+            volume = min(1, max(0, UserDefaults.standard.double(forKey: "bolera.volume")))
+        }
+        isMuted = UserDefaults.standard.bool(forKey: "bolera.muted")
         // Stamp the running build into the log — a pulled log must be
         // attributable to a build (48's forensics were silent and we couldn't
         // tell "no events" from "old build without the logging").
@@ -689,6 +708,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
         Task { @MainActor in await LastFmService.shared.updateNowPlaying(item); hasUpdatedNowPlayingCurrent = true }
         let lbClient = client
         Task { @MainActor in await ListenBrainzService.shared.updateNowPlaying(item, client: lbClient) }
+        Task { @MainActor in await LibreFmService.shared.updateNowPlaying(item) }
         maybeExtendQueue()       // endless-mix: top up the queue as it nears the end
         persistPlaybackState()   // remember the queue + new track for next launch
     }
@@ -932,6 +952,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                 Task { @MainActor in await LastFmService.shared.scrobble(cur, startedAt: startedAt) }
                 let lbClient = client
                 Task { @MainActor in await ListenBrainzService.shared.submitListen(cur, startedAt: startedAt, client: lbClient) }
+                Task { @MainActor in await LibreFmService.shared.scrobble(cur, startedAt: startedAt) }
             }
         }
         preloadNextIfNeeded()

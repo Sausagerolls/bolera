@@ -145,3 +145,68 @@ struct ListenBrainzSettingsView: View {
         }
     }
 }
+
+struct LibreFmSettingsView: View {
+    @ObservedObject private var libreFm = LibreFmService.shared
+    @State private var username = ""
+    @State private var password = ""
+    @State private var error: String?
+    @State private var working = false
+
+    var body: some View {
+        Form {
+            if libreFm.isAuthenticated {
+                Section("Account") {
+                    LabeledContent("Signed in as", value: libreFm.username ?? "—")
+                    Toggle("Scrobble plays", isOn: $libreFm.enabled)
+                    if let problem = libreFm.lastError {
+                        Text(problem).foregroundStyle(.red).font(.caption)
+                    }
+                    Button("Sign Out", role: .destructive) { libreFm.signOut() }
+                }
+            } else {
+                Section {
+                    TextField("Libre.fm username", text: $username)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    SecureField("Password", text: $password)
+                    if let err = error {
+                        Text(err).foregroundStyle(.red).font(.caption)
+                    }
+                    Button(action: signIn) {
+                        if working { ProgressView() } else { Text("Sign In") }
+                    }
+                    .disabled(working || username.isEmpty || password.isEmpty)
+                } header: {
+                    Text("Sign In with Libre.fm")
+                } footer: {
+                    Link("Create a free account at libre.fm",
+                         destination: URL(string: "https://libre.fm/")!)
+                }
+            }
+
+            Section {
+                Text("Libre.fm is a free, open-source scrobbling service. Scrobbles follow the same rules as Last.fm: the track must be longer than 30 seconds, and you must have played at least 50% of it (or 4 minutes, whichever comes first). Scrobbles made offline are sent when you're back online.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Libre.fm")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func signIn() {
+        working = true
+        error = nil
+        // Hand the password to the task and clear the field immediately.
+        let user = username, pwd = password
+        password = ""
+        Task {
+            do {
+                try await libreFm.signIn(username: user, password: pwd)
+            } catch {
+                await MainActor.run { self.error = error.localizedDescription }
+            }
+            await MainActor.run { self.working = false }
+        }
+    }
+}

@@ -142,6 +142,10 @@ public final class AuthManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "listenbrainz.username")
         UserDefaults.standard.removeObject(forKey: "listenbrainz.enabled")
         Task { @MainActor in ListenBrainzService.shared.signOut() }
+        Keychain.delete("librefm.sessionKey")
+        UserDefaults.standard.removeObject(forKey: "librefm.username")
+        UserDefaults.standard.removeObject(forKey: "librefm.enabled")
+        Task { @MainActor in LibreFmService.shared.signOut() }
         // The library cache + artwork were just wiped, so the next login should
         // re-run the prefetch onboarding (and re-show the "Preparing your
         // library" screen). Clear the flags it gates on.

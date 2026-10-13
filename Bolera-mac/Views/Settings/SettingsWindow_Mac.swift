@@ -12,8 +12,8 @@ struct SettingsWindow_Mac: View {
                 .tabItem { Label("Navigation", systemImage: "hand.draw") }
             LastFmSettings_Mac()
                 .tabItem { Label("Last.fm", systemImage: "waveform") }
-            ListenBrainzSettings_Mac()
-                .tabItem { Label("ListenBrainz", systemImage: "music.note.list") }
+            OpenScrobblingSettings_Mac()
+                .tabItem { Label("Scrobbling", systemImage: "music.note.list") }
             ProSettings_Mac()
                 .tabItem { Label("Pro", systemImage: "star.fill") }
             AboutSettings_Mac()
@@ -108,15 +108,90 @@ private struct LastFmSettings_Mac: View {
     }
 }
 
+/// ListenBrainz and Libre.fm — the open scrobbling services — share one tab so
+/// the Settings toolbar doesn't overflow.
+private struct OpenScrobblingSettings_Mac: View {
+    var body: some View {
+        Form {
+            ListenBrainzSettings_Mac()
+            LibreFmSettings_Mac()
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+private struct LibreFmSettings_Mac: View {
+    @ObservedObject private var libreFm = LibreFmService.shared
+    @State private var username: String = ""
+    @State private var password: String = ""
+    @State private var signingIn = false
+    @State private var lastError: String?
+
+    var body: some View {
+        Section("Libre.fm") {
+            if libreFm.isAuthenticated {
+                LabeledContent("Signed in as", value: libreFm.username ?? "—")
+                Toggle("Scrobble plays + send now-playing", isOn: $libreFm.enabled)
+                if let problem = libreFm.lastError {
+                    Text(problem).font(.caption).foregroundStyle(.red)
+                }
+                Button("Sign Out", role: .destructive) { libreFm.signOut() }
+            } else {
+                TextField("Libre.fm username", text: $username)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("Password", text: $password)
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    signIn()
+                } label: {
+                    if signingIn {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Sign In with Libre.fm")
+                    }
+                }
+                .disabled(signingIn || username.isEmpty || password.isEmpty)
+                Link("Create a free account at libre.fm", destination: URL(string: "https://libre.fm/")!)
+                    .font(.caption)
+            }
+            if let err = lastError {
+                Text(err).font(.caption).foregroundStyle(.red)
+            }
+            Text("Free, open-source scrobbling. Tracks > 30s, scrobbled past 50% or 4 minutes; offline scrobbles are sent when you're back online.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func signIn() {
+        signingIn = true
+        lastError = nil
+        let user = username, pwd = password
+        password = ""
+        Task {
+            do {
+                try await libreFm.signIn(username: user, password: pwd)
+                await MainActor.run { signingIn = false }
+            } catch {
+                await MainActor.run {
+                    signingIn = false
+                    lastError = error.localizedDescription
+                }
+            }
+        }
+    }
+}
+
 private struct ListenBrainzSettings_Mac: View {
     @ObservedObject private var listenBrainz = ListenBrainzService.shared
     @State private var token: String = ""
     @State private var connecting = false
     @State private var lastError: String?
 
+    // Sections only — hosted inside OpenScrobblingSettings_Mac's Form.
     var body: some View {
-        Form {
-            Section("Account") {
+        Group {
+            Section("ListenBrainz") {
                 if listenBrainz.isAuthenticated {
                     LabeledContent("Signed in as", value: listenBrainz.username ?? "—")
                     if let problem = listenBrainz.lastError {
@@ -144,7 +219,7 @@ private struct ListenBrainzSettings_Mac: View {
                     Text(err).font(.caption).foregroundStyle(.red)
                 }
             }
-            Section("Listens") {
+            Section("ListenBrainz listens") {
                 Toggle("Submit listens + send now-playing", isOn: $listenBrainz.enabled)
                     .disabled(!listenBrainz.isAuthenticated)
                 Text("Tracks > 30s, submitted past 50% or 4 minutes. Offline listens are sent when you're back online.")
@@ -155,8 +230,6 @@ private struct ListenBrainzSettings_Mac: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .padding()
     }
 
     private func connect() {
@@ -294,6 +367,7 @@ private struct PlaybackSettings_Mac: View {
     @ObservedObject private var pro = ProEntitlementStore.shared
     @Environment(\.openWindow) private var openWindow
     @AppStorage("bolera.ai.moodMixEnabled") private var moodMixEnabled: Bool = true
+    @AppStorage(inlineVolumeSliderKey) private var inlineVolume = false
     @State private var showConsent = false
     @State private var testing = false
     @State private var testResult: String?
@@ -301,6 +375,11 @@ private struct PlaybackSettings_Mac: View {
 
     var body: some View {
         Form {
+            Section("Volume") {
+                Toggle("Always show volume slider", isOn: $inlineVolume)
+                Text("Shows the slider next to the speaker button in the player bar and full-screen player, instead of in a pop-up when you click the button.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Equalizer") {
                 Button("Open Equalizer Window…") {
                     openWindow(id: "eq")

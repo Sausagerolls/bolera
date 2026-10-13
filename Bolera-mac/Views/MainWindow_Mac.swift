@@ -202,6 +202,11 @@ struct BottomPlayerBar_Mac: View {
     @State private var scrub: Double = 0
     @State private var ignoreSlideSetUntil: Date = .distantPast
     @Environment(\.openWindow) private var openWindow
+    @AppStorage(inlineVolumeSliderKey) private var inlineVolume = false
+
+    /// Width of each side group; equal so the transport stays centred. The
+    /// right group needs more room when the volume slider is shown inline.
+    private var sideWidth: CGFloat { inlineVolume ? 300 : 230 }
 
     private var isFavorite: Bool {
         guard let cur = player.current else { return false }
@@ -233,7 +238,8 @@ struct BottomPlayerBar_Mac: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(player.current == nil)
-                    .frame(width: 200, alignment: .leading)
+                    // Same width as the right-hand group so the transport stays centred.
+                    .frame(width: sideWidth, alignment: .leading)
 
                     Spacer()
 
@@ -256,6 +262,7 @@ struct BottomPlayerBar_Mac: View {
                     Spacer()
 
                     HStack(spacing: 14) {
+                        VolumeControl_Mac(sliderWidth: 80)
                         iconButton(isFavorite ? "heart.fill" : "heart",
                                    active: isFavorite,
                                    help: isFavorite ? "Remove from Favorites" : "Add to Favorites") {
@@ -292,7 +299,7 @@ struct BottomPlayerBar_Mac: View {
                         }
                     }
                     .disabled(player.current == nil)
-                    .frame(width: 200, alignment: .trailing)
+                    .frame(width: sideWidth, alignment: .trailing)
                 }
 
                 // Bottom row: full-width scrubber spans the entire bar.
@@ -465,6 +472,94 @@ struct BottomPlayerBar_Mac: View {
         .buttonStyle(.plain)
     }
 
+}
+
+/// Settings key: show the volume slider permanently instead of behind a
+/// popover button. Off by default; an accessibility option for anyone who
+/// finds the popover fiddly.
+let inlineVolumeSliderKey = "bolera.mac.inlineVolumeSlider"
+
+/// App volume control, separate from the system volume. By default a speaker
+/// button that opens a small popover above it holding the slider; with
+/// `inlineVolumeSliderKey` on, the button mutes and the slider sits beside it.
+/// Used in the bottom player bar and the full-screen player.
+struct VolumeControl_Mac: View {
+    @EnvironmentObject var player: AudioPlayer
+    @AppStorage(inlineVolumeSliderKey) private var inline = false
+    @State private var showPopover = false
+    var sliderWidth: CGFloat = 80
+    /// Icon colour; the full-screen player draws on artwork, so it passes white.
+    var iconColor: Color = .secondary
+    var iconFont: Font = .body
+
+    private var icon: String {
+        if player.isMuted || player.volume == 0 { return "speaker.slash.fill" }
+        if player.volume < 0.34 { return "speaker.wave.1.fill" }
+        if player.volume < 0.67 { return "speaker.wave.2.fill" }
+        return "speaker.wave.3.fill"
+    }
+
+    var body: some View {
+        if inline {
+            HStack(spacing: 6) {
+                speakerButton(action: toggleMute)
+                    .help(player.isMuted ? "Unmute" : "Mute")
+                slider.frame(width: sliderWidth)
+            }
+        } else {
+            speakerButton { showPopover.toggle() }
+                .help("Volume")
+                .popover(isPresented: $showPopover, arrowEdge: .top) {
+                    HStack(spacing: 10) {
+                        Button(action: toggleMute) {
+                            Image(systemName: icon)
+                                .frame(width: 22, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .help(player.isMuted ? "Unmute" : "Mute")
+                        slider.frame(width: 140)
+                        Text("\(Int(((player.isMuted ? 0 : player.volume) * 100).rounded()))%")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 34, alignment: .trailing)
+                    }
+                    .padding(12)
+                }
+        }
+    }
+
+    private func speakerButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(iconFont)
+                .foregroundStyle(iconColor)
+                // Fixed width so neighbours don't shift as the wave count changes.
+                .frame(width: 22, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var slider: some View {
+        Slider(value: Binding(
+            get: { player.isMuted ? 0 : player.volume },
+            set: { v in
+                player.volume = v
+                if player.isMuted && v > 0 { player.isMuted = false }
+            }
+        ), in: 0...1)
+        .controlSize(.small)
+        .help("Volume")
+    }
+
+    private func toggleMute() {
+        // Unmuting at zero would be silent — bring it back to a usable level.
+        if player.isMuted || player.volume == 0 {
+            if player.volume == 0 { player.volume = 0.5 }
+            player.isMuted = false
+        } else {
+            player.isMuted = true
+        }
+    }
 }
 
 private extension Double {

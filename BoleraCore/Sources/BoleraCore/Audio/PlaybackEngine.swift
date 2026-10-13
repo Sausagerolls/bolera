@@ -88,6 +88,13 @@ public final class PlaybackEngine: NSObject {
     // MARK: - Internals
 
     private let player = AVPlayer()
+
+    /// App-level output volume, 0…1. Lives on the AVPlayer, so it carries
+    /// across item swaps (every open reuses this one player).
+    public var volume: Float {
+        get { player.volume }
+        set { player.volume = max(0, min(1, newValue)) }
+    }
     /// Track time at which the current stream's own timeline starts.
     private var streamOffset: Double = 0
     /// Full track duration from library metadata — trusted over the item's own

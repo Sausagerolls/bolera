@@ -158,6 +158,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
     /// A mid-play increase = AVPlayer opened a fresh HTTP connection for the
     /// same item (the moment a byte-mapping desync can occur) — logged in tick.
     private var lastAccessEventCount = 0
+    /// Audio-format text for the Lock Screen / CarPlay album line, mirrored
+    /// from `AudioFormatState` (main actor) so `updateNowPlaying` can read it
+    /// from any thread. Nil line = setting off or format not known yet.
+    private var systemFormatLine: (id: String, line: String?)?
 
     /// Position the restored (last-session) queue should resume from on the
     /// FIRST play. The queue is restored paused with no AVPlayer item attached
@@ -235,6 +239,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
         DebugLog.write("[App] Bolera \(v) (build \(b)) started")
         bindEngine()
         setupRemoteCommands()
+        Task { @MainActor [weak self] in
+            let state = AudioFormatState.shared
+            state.onChange = {
+                self?.systemFormatLine = state.itemId.map { ($0, state.systemLine) }
+                self?.updateNowPlaying()
+            }
+        }
         #if canImport(UIKit)
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(handleInterruption),
@@ -703,6 +714,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
                     reason: trigger)
 
         loadArtwork(for: item)
+        trackAudioFormat(for: item)
         updateNowPlaying()
         scheduleStartReport(for: item)
         Task { @MainActor in await LastFmService.shared.updateNowPlaying(item); hasUpdatedNowPlayingCurrent = true }
@@ -737,6 +749,36 @@ public final class AudioPlayer: NSObject, ObservableObject {
                         return
                     }
                 } catch { /* retry */ }
+            }
+        }
+    }
+
+    /// Look up the source format for the audio-format readout and work out
+    /// how it's being delivered. A download or a non-metered direct stream is
+    /// the original file; a `/universal` stream is the original too unless the
+    /// server answered with an HLS transcode, which only the player's access
+    /// log reveals — so check it once the stream has had time to open.
+    private func trackAudioFormat(for item: BaseItem) {
+        let id = item.Id
+        let local = DownloadManager.shared.localFileURL(for: id) != nil
+        let c = client
+        Task { @MainActor in
+            AudioFormatState.shared.begin(itemId: id, client: c,
+                                          delivery: local ? .downloaded : .unknown)
+        }
+        guard !local else { return }
+        for delay in [3.0, 10.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.current?.Id == id,
+                      let event = self.activePlayer.currentItem?.accessLog()?.events.last else { return }
+                let delivery: AudioDelivery
+                if event.uri?.contains(".m3u8") == true {
+                    let k = event.indicatedBitrate > 0 ? Int((event.indicatedBitrate / 1000).rounded()) : nil
+                    delivery = .transcoded(kbps: k)
+                } else {
+                    delivery = .original
+                }
+                Task { @MainActor in AudioFormatState.shared.update(delivery: delivery, for: id) }
             }
         }
     }
@@ -1133,7 +1175,13 @@ public final class AudioPlayer: NSObject, ObservableObject {
         // setting an empty string makes CarPlay's Now Playing template
         // reserve space for it, which causes the artist line to overlap
         // the title when the layout collapses around a blank album row.
-        if let album = item.Album, !album.isEmpty {
+        // "Show audio format on Lock Screen & CarPlay" rides the album line —
+        // the only free-text row CarPlay's Now Playing template has.
+        let formatLine = systemFormatLine?.id == item.Id ? systemFormatLine?.line : nil
+        let album = item.Album ?? ""
+        if let formatLine {
+            info[MPMediaItemPropertyAlbumTitle] = album.isEmpty ? formatLine : "\(album) · \(formatLine)"
+        } else if !album.isEmpty {
             info[MPMediaItemPropertyAlbumTitle] = album
         }
         if let artwork = artwork {

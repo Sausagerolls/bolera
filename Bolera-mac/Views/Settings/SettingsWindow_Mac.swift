@@ -6,6 +6,8 @@ struct SettingsWindow_Mac: View {
         TabView {
             GeneralSettings_Mac()
                 .tabItem { Label("General", systemImage: "gear") }
+            AppearanceSettings_Mac()
+                .tabItem { Label("Appearance", systemImage: "paintpalette") }
             PlaybackSettings_Mac()
                 .tabItem { Label("Playback", systemImage: "play.circle") }
             NavigationSettings_Mac()
@@ -303,12 +305,20 @@ private struct NavigationSettings_Mac: View {
     }
 }
 
+private struct AppearanceSettings_Mac: View {
+    var body: some View {
+        Form {
+            ThemeSettingsSections()
+        }
+        .formStyle(.grouped)
+    }
+}
+
 private struct GeneralSettings_Mac: View {
     @EnvironmentObject var auth: AuthManager
     @ObservedObject private var prefetcher = LibraryPrefetcher.shared
     @AppStorage("bolera.maxBitrate") private var maxBitrate: Int = 320
     @AppStorage(MacA11y.scaleKey) private var uiScale = 1.0
-    @AppStorage(MacA11y.colourModeKey) private var colourMode = MacA11y.ColourMode.standard.rawValue
     @AppStorage(MacA11y.labelsKey) private var controlLabels = false
 
     var body: some View {
@@ -321,17 +331,11 @@ private struct GeneralSettings_Mac: View {
                 }
                 Text("Sizes the player bar and full-screen player controls. Also in View → Make Controls Larger / Smaller (⌘+ / ⌘−).")
                     .font(.caption).foregroundStyle(.secondary)
-                Picker("Colour vision", selection: $colourMode) {
-                    ForEach(MacA11y.ColourMode.allCases) { m in
-                        Text(m.name).tag(m.rawValue)
-                    }
-                }
-                Text("Replaces the purple highlight with a colour that stays distinct for that type of colour blindness, and marks controls that are switched on (shuffle, repeat, favourite…) with a dot so they never rely on colour alone. Album art is colour-corrected to match; in Monochrome it's shown in greyscale with boosted contrast.")
-                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Show control labels", isOn: $controlLabels)
                 Text("Adds a short label under each player control.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            ColourVisionSettingsSections()
             Section("Account") {
                 if let user = auth.userName {
                     LabeledContent("Signed in as", value: user)

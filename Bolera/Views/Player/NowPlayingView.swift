@@ -252,6 +252,8 @@ struct NowPlayingContent: View {
             }
             .buttonStyle(.plain)
             .disabled(artistId == nil)
+            AudioFormatBadge()
+                .padding(.top, 4)
         }
     }
 
@@ -465,6 +467,41 @@ struct SleepTimerSheet: View {
 /// Playback scrubber. Observes the lightweight `PlaybackClock` (not the whole
 /// AudioPlayer) so the ~2Hz position updates re-render only this tiny view —
 /// the parent Now Playing screen (and anything it presents) stays still.
+/// Codec / resolution / bitrate of the playing track, shown under the track
+/// info when Settings › Playback › Show audio format is on.
+struct AudioFormatBadge: View {
+    @ObservedObject private var state = AudioFormatState.shared
+    @AppStorage(AudioFormatState.showKey) private var show = false
+
+    var body: some View {
+        if show, let f = state.source {
+            VStack(spacing: 3) {
+                HStack(spacing: 6) {
+                    if f.isLossless {
+                        Text(f.isHiRes ? "HI-RES" : "LOSSLESS")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(lineWidth: 1))
+                    }
+                    Text(f.summary)
+                        .font(.caption.monospacedDigit())
+                }
+                .foregroundStyle(.secondary)
+                if let delivery = state.delivery.label {
+                    Text(delivery)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Audio format: \(f.summary)\(state.delivery.label.map { ", \($0)" } ?? "")")
+        }
+    }
+}
+
 struct ScrubBar: View {
     @EnvironmentObject private var player: AudioPlayer
     @ObservedObject var clock: PlaybackClock

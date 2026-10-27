@@ -28,6 +28,7 @@ struct SettingsView: View {
                 navRow("Streaming", "antenna.radiowaves.left.and.right") { StreamingSettingsView() }
                 navRow("Library", "books.vertical") { LibrarySettingsView() }
                 navRow("AI Features", "sparkles") { AISettingsView() }
+                navRow("Appearance", "paintpalette", subtitle: ThemeSettings.shared.source == .albumArt ? "Album art" : nil) { AppearanceSettingsView() }
                 navRow("Accessibility", "accessibility") { AccessibilitySettingsView() }
                 navRow("Bolera Pro", "star.circle", subtitle: pro.isPro ? "Unlocked" : nil) { ProSettingsView() }
                 navRow("About", "info.circle") { AboutSettingsView() }
@@ -135,35 +136,24 @@ private struct ScrobblingSettingsView: View {
     }
 }
 
+// MARK: - Appearance
+
+private struct AppearanceSettingsView: View {
+    var body: some View {
+        List {
+            ThemeSettingsSections()
+        }
+        .scrollContentBackground(.hidden)
+        .navigationTitle("Appearance")
+    }
+}
+
 // MARK: - Accessibility
 
 private struct AccessibilitySettingsView: View {
-    @AppStorage(ColourVisionMode.storageKey) private var colourVision = ColourVisionMode.standard.rawValue
-
     var body: some View {
         List {
-            Section {
-                Picker("Colour vision", selection: $colourVision) {
-                    ForEach(ColourVisionMode.allCases) { m in
-                        Text(m.name).tag(m.rawValue)
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            } header: {
-                Text("Colour vision")
-            } footer: {
-                Text("Replaces the purple highlight with a colour that stays distinct for that type of colour blindness, keeps text on it readable, and colour-corrects album art so colours you'd otherwise confuse stand apart. Monochrome shows album art in greyscale with boosted contrast.")
-            }
-            Section {
-                HStack(spacing: 12) {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.boleraAccent)
-                        .frame(width: 44, height: 44)
-                        .overlay(Image(systemName: "play.fill").foregroundStyle(Color.onBoleraAccent))
-                    Text("Highlight preview")
-                }
-            }
+            ColourVisionSettingsSections()
         }
         .scrollContentBackground(.hidden)
         .navigationTitle("Accessibility")
@@ -176,6 +166,8 @@ private struct StreamingSettingsView: View {
     @AppStorage("bolera.maxBitrate") private var maxBitrate: Int = 320
     @AppStorage("bolera.carplayBitrateEnabled") private var carplayBitrateEnabled: Bool = false
     @AppStorage("bolera.carplayBitrate") private var carplayBitrate: Int = 192
+    @AppStorage(AudioFormatState.showKey) private var showFormat = false
+    @AppStorage(AudioFormatState.showSystemKey) private var showFormatSystem = false
 
     var body: some View {
         List {
@@ -219,6 +211,17 @@ private struct StreamingSettingsView: View {
                 } label: {
                     Label("Equalizer", systemImage: "slider.vertical.3")
                 }
+            }
+
+            Section {
+                Toggle("Show on Now Playing", isOn: $showFormat)
+                Toggle("Show on Lock Screen & CarPlay", isOn: $showFormatSystem)
+                    .onChange(of: showFormatSystem) { AudioFormatState.shared.settingsChanged() }
+            } header: {
+                Text("Audio Format")
+            } footer: {
+                Text("Shows the playing track's codec, bit depth, sample rate and bitrate — for example FLAC · 24-bit / 96 kHz — and whether the server is transcoding it. On the Lock Screen and CarPlay it's added after the album name.")
+                    .font(.caption)
             }
         }
         .scrollContentBackground(.hidden)

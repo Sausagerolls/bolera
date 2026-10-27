@@ -140,12 +140,12 @@ private struct HomeContent_Mac: View {
         .buttonStyle(.plain)
     }
 
-    /// Standard keeps the purple→indigo sweep under white text. The colour
-    /// vision modes use their (light) accent, darkened slightly toward the
+    /// Standard with Bolera purple keeps the purple→indigo sweep under white
+    /// text. A theme accent or the colour vision modes use their (light) accent, darkened slightly toward the
     /// corner, under dark text — sweeping into purple/indigo there would put
     /// colours the mode is avoiding behind text that can't contrast with both.
     private var makeAMixBackground: LinearGradient {
-        if MacA11y.colourMode == .standard {
+        if MacA11y.colourMode == .standard && ThemeSettings.shared.accentRGB == .bolera {
             return LinearGradient(colors: [MacA11y.accent, Color.purple, Color.indigo],
                                   startPoint: .topLeading, endPoint: .bottomTrailing)
         }

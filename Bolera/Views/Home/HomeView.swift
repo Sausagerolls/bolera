@@ -172,12 +172,12 @@ struct HomeView: View {
 
     // MARK: - Daily section
 
-    /// Standard keeps the purple→indigo sweep under white text. The colour
-    /// vision modes use their (light) accent, darkened slightly toward the
+    /// Standard with Bolera purple keeps the purple→indigo sweep under white
+    /// text. A theme accent or the colour vision modes use their (light) accent, darkened slightly toward the
     /// corner, under dark text — sweeping into purple/indigo there would put
     /// colours the mode is avoiding behind text that can't contrast with both.
     private var makeAMixBackground: LinearGradient {
-        if ColourVisionMode.current == .standard {
+        if ColourVisionSettings.shared.mode == .standard && ThemeSettings.shared.accentRGB == .bolera {
             return LinearGradient(colors: [Color.boleraAccent, Color.purple, Color.indigo],
                                   startPoint: .topLeading, endPoint: .bottomTrailing)
         }

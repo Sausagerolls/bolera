@@ -477,9 +477,6 @@ struct BottomPlayerBar_Mac: View {
 enum MacA11y {
     /// Interface scale for the player bar and full-screen player controls.
     static let scaleKey = "bolera.mac.uiScale"
-    /// Colour vision mode (`ColourMode` raw value): swaps the accent colour
-    /// for one that stays distinct under that colour-vision deficiency.
-    static let colourModeKey = ColourVisionMode.storageKey
     /// Show a text label under each player control.
     static let labelsKey = "bolera.mac.controlLabels"
 
@@ -491,15 +488,14 @@ enum MacA11y {
         default: return "Extra Large"
         }
     }
-    /// Colour vision modes live in BoleraCore (shared with iOS).
-    typealias ColourMode = ColourVisionMode
-
-    static var colourMode: ColourMode { ColourVisionMode.current }
-    /// The app's accent under the current colour mode. Use instead of
-    /// `Color.accentColor`, which always resolves to the asset purple.
-    static var accent: Color { colourMode.accent }
+    /// Colour vision settings live in BoleraCore (shared with iOS) and are
+    /// observable, so views reading these redraw when they change.
+    static var colourMode: ColourVisionMode { ColourVisionSettings.shared.mode }
+    /// The app's accent under the current colour vision settings. Use instead
+    /// of `Color.accentColor`, which always resolves to the asset purple.
+    static var accent: Color { ColourVisionSettings.shared.accent }
     /// Readable text colour for content drawn on `accent`.
-    static var onAccent: Color { colourMode.onAccent }
+    static var onAccent: Color { ColourVisionSettings.shared.onAccent }
 
     /// Next scale step up (+1) or down (-1), clamped to the available sizes.
     static func step(_ current: Double, by delta: Int) -> Double {
@@ -523,11 +519,9 @@ struct PlayerControlButton_Mac: View {
 
     @AppStorage(MacA11y.scaleKey) private var scale = 1.0
     @AppStorage(MacA11y.labelsKey) private var labels = false
-    @AppStorage(MacA11y.colourModeKey) private var colourModeRaw = MacA11y.ColourMode.standard.rawValue
-
-    private var mode: MacA11y.ColourMode { MacA11y.ColourMode(rawValue: colourModeRaw) ?? .standard }
+    private var colourVision: ColourVisionSettings { .shared }
     private var color: Color {
-        if active { return mode.accent }
+        if active { return colourVision.accent }
         return tint ?? .primary
     }
 
@@ -544,7 +538,7 @@ struct PlayerControlButton_Mac: View {
                         .lineLimit(1)
                         .fixedSize()
                 }
-                if mode.showsActiveIndicator {
+                if colourVision.showsActiveIndicator {
                     // Non-colour "on" cue; kept in layout when off so toggling
                     // doesn't shift the bar.
                     Circle()

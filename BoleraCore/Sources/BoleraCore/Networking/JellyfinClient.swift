@@ -751,6 +751,41 @@ public struct JellyfinClient {
         return try await send(req, as: BaseItem.self)
     }
 
+    /// Codec, sample rate, bit depth and bitrate of a track's source file, from
+    /// its first media source's audio stream. Nil when the server has no probe
+    /// data for it.
+    public func audioFormat(_ itemId: String) async throws -> AudioFormat? {
+        struct Stream: Decodable {
+            let `Type`: String?
+            let Codec: String?
+            let BitRate: Int?
+            let SampleRate: Int?
+            let BitDepth: Int?
+            let Channels: Int?
+        }
+        struct Source: Decodable {
+            let Container: String?
+            let Bitrate: Int?
+            let MediaStreams: [Stream]?
+        }
+        struct Item: Decodable { let MediaSources: [Source]? }
+        let q = [
+            URLQueryItem(name: "Ids", value: itemId),
+            URLQueryItem(name: "Fields", value: "MediaSources,MediaStreams")
+        ]
+        let req = try request("Users/\(userId)/Items", query: q)
+        let res = try await send(req, as: ItemsResponse<Item>.self)
+        guard let source = res.Items.first?.MediaSources?.first else { return nil }
+        let audio = source.MediaStreams?.first { $0.Type == "Audio" }
+        guard audio != nil || source.Container != nil else { return nil }
+        return AudioFormat(codec: audio?.Codec,
+                           container: source.Container,
+                           bitrate: audio?.BitRate ?? source.Bitrate,
+                           sampleRate: audio?.SampleRate,
+                           bitDepth: audio?.BitDepth,
+                           channels: audio?.Channels)
+    }
+
     public func similarArtists(_ id: String, limit: Int = 20) async throws -> [BaseItem] {
         let q: [URLQueryItem] = [
             URLQueryItem(name: "UserId", value: userId),

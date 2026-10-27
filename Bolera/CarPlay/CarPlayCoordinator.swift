@@ -123,11 +123,27 @@ final class CarPlayCoordinator {
         FavoritesSync.shared.isFavorite(item)
     }
 
-    /// SF Symbol sized for a CarPlay Now Playing button (rendered as a template
-    /// image, tinted by the head unit).
+    /// SF Symbol for a CarPlay Now Playing button, drawn centred on a square
+    /// transparent canvas and returned as a template image (tinted by the head
+    /// unit). Head units scale button images to fill a square slot, so passing
+    /// the raw symbol — wider than tall for the heart and antenna — got it
+    /// stretched out of shape on some cars (reported on a 2025 Ford F-250).
+    /// A square image with padding scales uniformly everywhere.
     private func nowPlayingButtonImage(_ systemName: String) -> UIImage {
-        let cfg = UIImage.SymbolConfiguration(pointSize: 36, weight: .regular)
-        return UIImage(systemName: systemName, withConfiguration: cfg) ?? UIImage()
+        let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .regular)
+        guard let symbol = UIImage(systemName: systemName, withConfiguration: cfg) else { return UIImage() }
+        let side: CGFloat = 40
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3
+        let img = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            // Fit (never stretch) within the canvas, keeping the symbol's aspect.
+            let s = symbol.size
+            let k = min(1, (side - 4) / max(s.width, s.height))
+            let w = s.width * k, h = s.height * k
+            symbol.withTintColor(.black, renderingMode: .alwaysOriginal)
+                .draw(in: CGRect(x: (side - w) / 2, y: (side - h) / 2, width: w, height: h))
+        }
+        return img.withRenderingMode(.alwaysTemplate)
     }
 
     private func refreshNowPlayingButtons() {

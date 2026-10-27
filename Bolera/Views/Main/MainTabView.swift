@@ -83,6 +83,12 @@ private struct MiniPlayerOverlay: View {
                 // leaving the bottom edge free — a 60pt lift there just floats
                 // the player above an empty gap, so use a small margin instead.
                 .padding(.bottom, hSize == .compact ? 60 : 8)
+                // Pin to the tab bar, not the keyboard. Without this the overlay
+                // rides the keyboard safe area: it jumps up whenever Search's
+                // keyboard opens, and if the tab changes while the keyboard is
+                // up the inset can be left behind, stranding the player
+                // mid-screen on Home (keyboard height + 60pt up).
+                .ignoresSafeArea(.keyboard, edges: .bottom)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }

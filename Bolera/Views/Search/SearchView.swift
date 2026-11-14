@@ -105,6 +105,9 @@ struct SearchRow: View {
             }
             Spacer()
         }
+        // Whole row is the hit area, so a long-press anywhere on a song
+        // opens the track menu (not just on its text or artwork).
+        .contentShape(Rectangle())
     }
 
     /// Build a navigable BaseItem stub from the search hint. Detail views

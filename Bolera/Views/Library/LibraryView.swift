@@ -950,6 +950,7 @@ private struct DownloadedTrackRow: View {
                 Spacer()
                 Text(t.durationSeconds.mmSS).font(.caption).foregroundStyle(.secondary)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .trackContextMenu(t)

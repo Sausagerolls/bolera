@@ -176,6 +176,10 @@ struct SongRow: View {
                     .foregroundStyle(.secondary)
             }
             .padding(.vertical, 10)
+            // Whole row is the hit area — without this only the text and
+            // duration answered a tap or long-press, so a long-press on the
+            // empty middle of the row never opened the track menu.
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .trackContextMenu(song)

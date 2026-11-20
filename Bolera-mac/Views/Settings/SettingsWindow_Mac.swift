@@ -317,7 +317,8 @@ private struct AppearanceSettings_Mac: View {
 private struct GeneralSettings_Mac: View {
     @EnvironmentObject var auth: AuthManager
     @ObservedObject private var prefetcher = LibraryPrefetcher.shared
-    @AppStorage("bolera.maxBitrate") private var maxBitrate: Int = 320
+    @AppStorage(StreamQuality.wifiKey) private var wifiQuality: Int = StreamQuality.original
+    @AppStorage(StreamQuality.mobileKey) private var mobileQuality: Int = 256
     @AppStorage(MacA11y.scaleKey) private var uiScale = 1.0
     @AppStorage(MacA11y.labelsKey) private var controlLabels = false
 
@@ -366,16 +367,24 @@ private struct GeneralSettings_Mac: View {
                                    value: last.formatted(date: .abbreviated, time: .shortened))
                 }
             }
-            Section("Streaming") {
-                Picker("Max Bitrate", selection: $maxBitrate) {
-                    Text("96 kbps").tag(96)
-                    Text("128 kbps").tag(128)
-                    Text("192 kbps").tag(192)
-                    Text("256 kbps").tag(256)
-                    Text("320 kbps").tag(320)
-                    Text("Lossless").tag(1411)
+            Section {
+                Picker("Quality", selection: $wifiQuality) {
+                    ForEach(StreamQuality.options, id: \.kbps) { o in
+                        Text(o.name).tag(o.kbps)
+                    }
                 }
+                Picker("On Personal Hotspot", selection: $mobileQuality) {
+                    ForEach(StreamQuality.options, id: \.kbps) { o in
+                        Text(o.name).tag(o.kbps)
+                    }
+                }
+            } header: {
+                Text("Streaming")
+            } footer: {
+                Text("The hotspot setting is used when the Mac is on a metered network, such as an iPhone's Personal Hotspot or Low Data Mode. Downloads are always full quality.")
             }
+            .onChange(of: wifiQuality) { NotificationCenter.default.post(name: StreamQuality.didChange, object: nil) }
+            .onChange(of: mobileQuality) { NotificationCenter.default.post(name: StreamQuality.didChange, object: nil) }
         }
         .formStyle(.grouped)
         .padding()

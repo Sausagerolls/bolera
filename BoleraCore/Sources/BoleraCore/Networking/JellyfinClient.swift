@@ -1072,13 +1072,6 @@ public struct JellyfinClient {
         return comps.url ?? baseURL
     }
 
-    /// Max bitrate (kbps) the app will ever stream over a metered (cellular /
-    /// hotspot / Tailscale-over-cellular) path, regardless of the user's quality
-    /// setting. Raw FLAC over cellular to a LAN-only server was the #1 cause of
-    /// mid-drive stalls — a 320kbps progressive transcode is ~4× lighter and
-    /// actually sustains over a flaky link. Wi-Fi/LAN still streams full quality.
-    public static let cellularBitrateCeiling = 320
-
     /// A playback stream plus where its timeline begins within the track.
     /// `timelineOffset` is non-zero only when the stream is a transcode opened
     /// with `StartTimeTicks` — the stream's t=0 is that many seconds into the
@@ -1089,10 +1082,11 @@ public struct JellyfinClient {
     }
 
     /// Stream URL for PLAYBACK.
-    /// - On Wi-Fi/LAN (not metered): the direct original file (full quality,
-    ///   byte-range seekable, lowest latency).
-    /// - On a METERED path: a bitrate-capped `universal` stream — even when the
-    ///   user picked Lossless, because raw FLAC over cellular stalls constantly.
+    /// Uses the user's quality for the current network (`StreamQuality.wifi`
+    /// or `.mobile`, chosen by `NetworkCost.isMetered`).
+    /// - "Original": the direct source file (full quality, byte-range
+    ///   seekable, lowest latency).
+    /// - A bitrate: a capped `universal` stream.
     ///   A source inside the cap still direct-plays; one that must be re-encoded
     ///   now gets HLS. `maxBitrateOverride` lets stall-recovery step the bitrate
     ///   down further on a marginal link until it finds one that holds.
@@ -1132,25 +1126,27 @@ public struct JellyfinClient {
         let carplayOverride = UserDefaults.standard.bool(forKey: "bolera.carplayBitrateEnabled")
             && AudioPlayer.isCarPlayActive
 
-        // Not metered AND no CarPlay override → full-quality direct stream, which
-        // (unlike the progressive transcode) is byte-range seekable so a recovery
-        // reload resumes exactly. A flaky home Wi-Fi stalls rarely; reopening the
-        // same direct stream is the right move — don't drop to transcode here.
-        guard ConnectivityStore.pathIsExpensive || carplayOverride else {
-            return PlaybackStream(url: audioStreamURL(for: itemId), timelineOffset: 0)
-        }
-        // Baseline cap: an explicit CarPlay bitrate wins; otherwise the metered
-        // ceiling capping the user's quality setting.
+        // Baseline cap: an explicit CarPlay bitrate wins; otherwise the user's
+        // quality for the current network (Wi-Fi or mobile data).
+        let metered = NetworkCost.isMetered
         let baseline: Int
         if carplayOverride {
-            let cp = UserDefaults.standard.object(forKey: "bolera.carplayBitrate") as? Int ?? 192
-            baseline = min(cp, Self.cellularBitrateCeiling)
+            baseline = UserDefaults.standard.object(forKey: "bolera.carplayBitrate") as? Int ?? 192
         } else {
-            let userMax = UserDefaults.standard.object(forKey: "bolera.maxBitrate") as? Int ?? 320
-            baseline = min(userMax, Self.cellularBitrateCeiling)
+            baseline = metered ? StreamQuality.mobile : StreamQuality.wifi
+        }
+        // Original quality → direct stream: full quality and byte-range
+        // seekable, so a recovery reload resumes exactly. On Wi-Fi that stays
+        // true even after a stall (a flaky home network rarely stalls, and
+        // reopening the same direct stream is the right move). On mobile data,
+        // stall recovery may still step down to a transcode until a rate holds.
+        if baseline == StreamQuality.original && (maxBitrateOverride == nil || !metered) {
+            return PlaybackStream(url: audioStreamURL(for: itemId), timelineOffset: 0)
         }
         // Stall recovery can only step the rate DOWN from the baseline, never up.
-        let cap = max(48, min(maxBitrateOverride ?? baseline, baseline))
+        // An "original" baseline has no ceiling of its own.
+        let ceiling = baseline == StreamQuality.original ? Int.max : baseline
+        let cap = max(48, min(maxBitrateOverride ?? ceiling, ceiling))
         guard var comps = URLComponents(url: baseURL.appendingPathComponent("Audio/\(itemId)/universal"), resolvingAgainstBaseURL: false) else {
             return PlaybackStream(url: audioStreamURL(for: itemId), timelineOffset: 0)
         }

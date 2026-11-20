@@ -163,27 +163,32 @@ private struct AccessibilitySettingsView: View {
 // MARK: - Streaming
 
 private struct StreamingSettingsView: View {
-    @AppStorage("bolera.maxBitrate") private var maxBitrate: Int = 320
+    @AppStorage(StreamQuality.wifiKey) private var wifiQuality: Int = StreamQuality.original
+    @AppStorage(StreamQuality.mobileKey) private var mobileQuality: Int = 256
     @AppStorage("bolera.carplayBitrateEnabled") private var carplayBitrateEnabled: Bool = false
     @AppStorage("bolera.carplayBitrate") private var carplayBitrate: Int = 192
     @AppStorage(AudioFormatState.showKey) private var showFormat = false
     @AppStorage(AudioFormatState.showSystemKey) private var showFormatSystem = false
+    @State private var metered = NetworkCost.isMetered
 
     var body: some View {
         List {
             Section {
-                Picker("Max Streaming Bitrate", selection: $maxBitrate) {
-                    Text("96 kbps").tag(96)
-                    Text("128 kbps").tag(128)
-                    Text("192 kbps").tag(192)
-                    Text("256 kbps").tag(256)
-                    Text("320 kbps").tag(320)
-                    Text("Lossless").tag(1411)
+                Picker("Wi-Fi", selection: $wifiQuality) {
+                    ForEach(StreamQuality.options, id: \.kbps) { o in
+                        Text(o.name).tag(o.kbps)
+                    }
                 }
+                Picker("Mobile Data", selection: $mobileQuality) {
+                    ForEach(StreamQuality.options, id: \.kbps) { o in
+                        Text(o.name).tag(o.kbps)
+                    }
+                }
+                LabeledContent("Using now", value: metered ? "Mobile Data" : "Wi-Fi")
             } header: {
-                Text("Quality")
+                Text("Streaming Quality")
             } footer: {
-                Text("Wi-Fi streams at this quality. On cellular, Bolera automatically caps to a reliable rate so playback doesn't stall in patchy signal.")
+                Text("Mobile Data is used on cellular, Personal Hotspot and Low Data Mode, including through a VPN such as Tailscale. Original streams the file as stored on your server; lower rates save data and keep playing in weak signal. Applies from the next track. Downloads are always full quality.")
                     .font(.caption)
             }
 
@@ -201,7 +206,7 @@ private struct StreamingSettingsView: View {
             } header: {
                 Text("CarPlay")
             } footer: {
-                Text("When connected to CarPlay, stream at this bitrate instead of your normal setting — pick a lower rate so music keeps up through dead spots while driving. Off uses your Max Streaming Bitrate.")
+                Text("When connected to CarPlay, stream at this bitrate instead of your normal setting — pick a lower rate so music keeps up through dead spots while driving. Off uses your Wi-Fi or Mobile Data quality.")
                     .font(.caption)
             }
 
@@ -226,6 +231,11 @@ private struct StreamingSettingsView: View {
         }
         .scrollContentBackground(.hidden)
         .navigationTitle("Streaming")
+        .onReceive(NotificationCenter.default.publisher(for: NetworkCost.didChange)) { _ in
+            metered = NetworkCost.isMetered
+        }
+        .onChange(of: wifiQuality) { NotificationCenter.default.post(name: StreamQuality.didChange, object: nil) }
+        .onChange(of: mobileQuality) { NotificationCenter.default.post(name: StreamQuality.didChange, object: nil) }
     }
 }
 

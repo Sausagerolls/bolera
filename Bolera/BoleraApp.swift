@@ -20,6 +20,7 @@ struct BoleraApp: App {
 
     init() {
         LegacyMigration.runIfNeeded()
+        StreamQuality.prepare()
         // Wire the audio player to the auth singleton up front so CarPlay can
         // start playback before the SwiftUI scene has appeared.
         AudioPlayer.shared.authManager = AuthManager.shared

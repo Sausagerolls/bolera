@@ -233,16 +233,9 @@ public final class ConnectivityStore: ObservableObject {
     private var pendingOfflineTask: Task<Void, Never>?
     private var pathSatisfied = true
 
-    /// True when the current network path is metered (cellular / hotspot) or in
-    /// Low Data Mode — read synchronously when building a stream URL so we can
-    /// transcode down over those links but keep full quality on Wi-Fi/LAN.
-    nonisolated(unsafe) public static var pathIsExpensive = false
-
     public init() {
         monitor.pathUpdateHandler = { [weak self] path in
             let satisfied = path.status == .satisfied
-            let expensive = path.isExpensive || path.isConstrained
-            ConnectivityStore.pathIsExpensive = expensive
             DebugLog.write("[Connectivity] path satisfied=\(satisfied) expensive=\(path.isExpensive) constrained=\(path.isConstrained) ifaces=\(path.availableInterfaces.map { $0.type })")
             Task { @MainActor in
                 guard let self else { return }

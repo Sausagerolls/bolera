@@ -186,10 +186,7 @@ public final class AudioPlayer: NSObject, ObservableObject {
     private let audioNetMonitor = NWPathMonitor()
     private let audioNetQueue = DispatchQueue(label: "com.bolera.audio.netmonitor")
     private var lastNetSatisfied = true
-    /// Last seen path cost, so a Wi-Fi↔cellular flip can drop assets warmed
-    /// under the old conditions (a Wi-Fi-warmed full-quality FLAC must not be
-    /// streamed over cellular).
-    private var lastNetExpensive = false
+    private var netCostObservers: [NSObjectProtocol] = []
     private var reconnectCancellable: AnyCancellable?
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
     #endif
@@ -268,22 +265,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
                                                object: nil)
         audioNetMonitor.pathUpdateHandler = { [weak self] path in
             let satisfied = path.status == .satisfied
-            let expensive = path.isExpensive || path.isConstrained
             DispatchQueue.main.async {
                 guard let self else { return }
                 let wasSatisfied = self.lastNetSatisfied
                 self.lastNetSatisfied = satisfied
-                if expensive != self.lastNetExpensive {
-                    self.lastNetExpensive = expensive
-                    // Cost flipped (left Wi-Fi for cellular, or back). Drop assets
-                    // warmed under the old conditions so upcoming tracks reopen at
-                    // the right bitrate — a Wi-Fi-warmed FLAC streamed over
-                    // cellular is exactly what stalled the 4th track silently.
-                    if !self.preloadedAssets.isEmpty {
-                        self.preloadedAssets.removeAll()
-                        DebugLog.write("[AudioPlayer] path expensive=\(expensive) — cleared \(expensive ? "Wi-Fi-warmed" : "cellular-warmed") assets")
-                    }
-                }
                 // Only FORCE a reload when the network genuinely came back after
                 // being lost (dead zone / tunnel). On a Wi-Fi→cellular HANDOFF
                 // (was satisfied, still satisfied, just a different interface),
@@ -296,6 +281,19 @@ public final class AudioPlayer: NSObject, ObservableObject {
             }
         }
         audioNetMonitor.start(queue: audioNetQueue)
+        // Network cost flipped (left Wi-Fi for mobile data, or back). Drop
+        // assets warmed under the old conditions so upcoming tracks reopen at
+        // that network's quality — a Wi-Fi-warmed FLAC streamed over cellular
+        // is exactly what stalled the 4th track silently.
+        // The same applies when the user changes a quality setting.
+        NetworkCost.start()
+        netCostObservers = [NetworkCost.didChange, StreamQuality.didChange].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                guard let self, !self.preloadedAssets.isEmpty else { return }
+                self.preloadedAssets.removeAll()
+                DebugLog.write("[AudioPlayer] \(name.rawValue) (metered=\(NetworkCost.isMetered)) — cleared warmed assets")
+            }
+        }
         // The server answering a connectivity probe again is the most precise
         // "resume now" signal for a LAN-only server reachable via a tunnel.
         Task { @MainActor [weak self] in

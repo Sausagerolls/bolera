@@ -124,7 +124,11 @@ public final class AudioFormatState: ObservableObject {
 
     @Published public private(set) var itemId: String?
     @Published public private(set) var source: AudioFormat?
+    /// How the track is reaching the device, with a capped stream resolved
+    /// against the source format (see `resolve`).
     @Published public private(set) var delivery: AudioDelivery = .unknown
+    /// What the player itself reported, before resolving.
+    private var reported: AudioDelivery = .unknown
 
     private var cache: [String: AudioFormat] = [:]
     private var fetch: Task<Void, Never>?
@@ -149,8 +153,9 @@ public final class AudioFormatState: ObservableObject {
     func begin(itemId: String, client: JellyfinClient?, delivery: AudioDelivery) {
         fetch?.cancel()
         self.itemId = itemId
-        self.delivery = delivery
+        reported = delivery
         source = cache[itemId]
+        self.delivery = Self.resolve(delivery, source: source)
         onChange?()
         guard source == nil, let client else { return }
         fetch = Task { [weak self] in
@@ -158,14 +163,31 @@ public final class AudioFormatState: ObservableObject {
             guard let self, !Task.isCancelled, self.itemId == itemId else { return }
             self.cache[itemId] = f
             self.source = f
+            self.delivery = Self.resolve(self.reported, source: f)
             self.onChange?()
         }
     }
 
     func update(delivery: AudioDelivery, for itemId: String) {
-        guard self.itemId == itemId, self.delivery != delivery else { return }
-        self.delivery = delivery
+        guard self.itemId == itemId else { return }
+        reported = delivery
+        let resolved = Self.resolve(delivery, source: source)
+        guard resolved != self.delivery else { return }
+        self.delivery = resolved
         onChange?()
+    }
+
+    /// A capped stream whose server answer the player hasn't reported (it
+    /// often doesn't for a plain progressive file) is worked out from the
+    /// source: lossless files are never offered for direct play under a cap,
+    /// so they're transcoded; a lossy file within the cap plays as-is; a
+    /// lossy file above it is transcoded by the server's bitrate check.
+    static func resolve(_ d: AudioDelivery, source: AudioFormat?) -> AudioDelivery {
+        guard case .limited(let cap) = d, let source else { return d }
+        if source.isLossless { return .transcoded(kbps: cap) }
+        guard let b = source.bitrate, b > 0 else { return d }
+        // ~5% slack: a "320 kbps" MP3 often reports a little over 320,000.
+        return Double(b) <= Double(cap) * 1000 * 1.05 ? .original : .transcoded(kbps: cap)
     }
 
     /// Re-publish to the Lock Screen / CarPlay after the setting is toggled.
@@ -176,5 +198,6 @@ public final class AudioFormatState: ObservableObject {
         itemId = nil
         source = nil
         delivery = .unknown
+        reported = .unknown
     }
 }

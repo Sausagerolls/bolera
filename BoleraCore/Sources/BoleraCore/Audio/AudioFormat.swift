@@ -98,12 +98,15 @@ public enum AudioDelivery: Equatable, Sendable {
     /// The server is re-encoding to AAC at roughly this many kbps (nil when
     /// the player hasn't reported a rate yet).
     case transcoded(kbps: Int?)
+    /// Requested with a bitrate limit; the server's answer isn't known yet.
+    case limited(kbps: Int)
 
     public var label: String? {
         switch self {
         case .unknown, .original: return nil
         case .downloaded: return "Downloaded"
-        case .transcoded(let k): return k.map { "Transcoded to AAC \($0) kbps" } ?? "Transcoded to AAC"
+        case .transcoded: return nil   // the badge shows the delivered stream itself
+        case .limited(let k): return "Limited to \(k) kbps"
         }
     }
 }
@@ -138,7 +141,7 @@ public final class AudioFormatState: ObservableObject {
     public var systemLine: String? {
         guard Self.showsOnSystem, let source else { return nil }
         if case .transcoded(let k) = delivery {
-            return "\(source.compact) → AAC" + (k.map { " \($0)k" } ?? "")
+            return "AAC" + (k.map { " \($0)k" } ?? "") + " from \(source.codecName)"
         }
         return source.compact
     }

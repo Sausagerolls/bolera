@@ -765,20 +765,44 @@ public final class AudioPlayer: NSObject, ObservableObject {
                                           delivery: local ? .downloaded : .unknown)
         }
         guard !local else { return }
-        for delay in [3.0, 10.0] {
+        // Keep checking until the stream has opened: a capped stream on mobile
+        // data can take well over 10s to start (transcoder spin-up plus the
+        // start buffer), and the old 3s/10s checks missed it entirely.
+        for delay in [1.0, 3.0, 6.0, 10.0, 15.0, 25.0, 40.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self, self.current?.Id == id,
-                      let event = self.activePlayer.currentItem?.accessLog()?.events.last else { return }
-                let delivery: AudioDelivery
-                if event.uri?.contains(".m3u8") == true {
-                    let k = event.indicatedBitrate > 0 ? Int((event.indicatedBitrate / 1000).rounded()) : nil
-                    delivery = .transcoded(kbps: k)
-                } else {
-                    delivery = .original
-                }
+                      let playing = self.activePlayer.currentItem,
+                      let url = (playing.asset as? AVURLAsset)?.url else { return }
+                let delivery = Self.delivery(of: playing, url: url)
                 Task { @MainActor in AudioFormatState.shared.update(delivery: delivery, for: id) }
             }
         }
+    }
+
+    /// How `item` is reaching the device, from the URL Bolera asked for and
+    /// what the player has actually received.
+    ///
+    /// A direct `/stream?Static=true` URL is always the original file. A
+    /// `/universal` URL carries a bitrate limit; the server either serves the
+    /// original (a lossy file already under the limit) or an HLS transcode.
+    /// HLS shows in the access log as a VOD/LIVE playback type or an .m3u8
+    /// URI. The URI alone isn't enough: when the server redirects, the log can
+    /// show the /universal URL instead of the playlist.
+    private static func delivery(of item: AVPlayerItem, url: URL) -> AudioDelivery {
+        if url.isFileURL { return .downloaded }
+        guard url.path.contains("/universal") else { return .original }
+        let cap = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "MaxStreamingBitrate" }?
+            .value.flatMap(Int.init).map { $0 / 1000 }
+        guard let event = item.accessLog()?.events.last else {
+            return cap.map { .limited(kbps: $0) } ?? .unknown
+        }
+        let type = event.playbackType?.uppercased() ?? ""
+        if type == "VOD" || type == "LIVE" || event.uri?.contains(".m3u8") == true {
+            let k = event.indicatedBitrate > 0 ? Int((event.indicatedBitrate / 1000).rounded()) : nil
+            return .transcoded(kbps: k ?? cap)
+        }
+        return .original
     }
 
     private func loadArtwork(for item: BaseItem) {

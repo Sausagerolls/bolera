@@ -476,28 +476,37 @@ struct AudioFormatBadge: View {
     var body: some View {
         if show, let f = state.source {
             VStack(spacing: 3) {
-                HStack(spacing: 6) {
-                    if f.isLossless {
-                        Text(f.isHiRes ? "HI-RES" : "LOSSLESS")
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(lineWidth: 1))
-                    }
-                    Text(f.summary)
+                if case .transcoded(let k) = state.delivery {
+                    // Show what's actually playing, then where it came from.
+                    Text(["AAC", k.map { "\($0) kbps" }].compactMap { $0 }.joined(separator: " · "))
                         .font(.caption.monospacedDigit())
-                }
-                .foregroundStyle(.secondary)
-                if let delivery = state.delivery.label {
-                    Text(delivery)
-                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text("Transcoded from \(f.summary)")
+                        .font(.caption2.monospacedDigit())
                         .foregroundStyle(.tertiary)
+                } else {
+                    HStack(spacing: 6) {
+                        if f.isLossless {
+                            Text(f.isHiRes ? "HI-RES" : "LOSSLESS")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .overlay(RoundedRectangle(cornerRadius: 3).stroke(lineWidth: 1))
+                        }
+                        Text(f.summary)
+                            .font(.caption.monospacedDigit())
+                    }
+                    .foregroundStyle(.secondary)
+                    if let delivery = state.delivery.label {
+                        Text(delivery)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
             .lineLimit(1)
             .minimumScaleFactor(0.8)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Audio format: \(f.summary)\(state.delivery.label.map { ", \($0)" } ?? "")")
         }
     }
 }

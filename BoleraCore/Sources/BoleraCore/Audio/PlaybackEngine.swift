@@ -57,6 +57,12 @@ public final class PlaybackEngine: NSObject {
     /// Build a stream for a track starting at `startAt` seconds, capped to
     /// `bitrateCap` kbps when non-nil (recovery steps this down).
     public var makeStream: ((_ trackId: String, _ startAt: Double, _ bitrateCap: Int?) -> Stream)?
+    /// HTTP headers sent with every request for a network stream (the Jellyfin
+    /// Authorization header). The `api_key` query item alone isn't enough: a
+    /// capped `/universal` stream answers with an HLS playlist or redirect
+    /// whose follow-up requests can drop it, and they then fail 401
+    /// (NSURLErrorDomain -1013). Headers ride along on every request.
+    public var streamHeaders: (() -> [String: String])?
     /// Attach the EQ/visualiser tap to a freshly created item.
     public var attachProcessor: ((AVPlayer, AVPlayerItem) -> Void)?
     /// Detach/dispose the tap for an item being discarded.
@@ -203,7 +209,12 @@ public final class PlaybackEngine: NSObject {
         // Anything the stream doesn't cover has to be made up client-side.
         pendingSeek = (start - streamOffset) > 0.5 ? start : nil
 
-        let item = AVPlayerItem(url: url)
+        let item: AVPlayerItem
+        if !url.isFileURL, let headers = streamHeaders?(), !headers.isEmpty {
+            item = AVPlayerItem(asset: AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers]))
+        } else {
+            item = AVPlayerItem(url: url)
+        }
         // Buffer well ahead so brief dead spots (tunnels, rural gaps) are covered
         // by audio already on the device rather than stalling. 0 = AVPlayer's
         // conservative default, which let a short gap empty the buffer.
@@ -417,6 +428,9 @@ public final class PlaybackEngine: NSObject {
                 case .failed:
                     let msg = it.error?.localizedDescription ?? "unknown"
                     DebugLog.write("[Engine] item failed: \(msg)")
+                    if let url = (it.asset as? AVURLAsset)?.url, !url.isFileURL {
+                        StreamProbe.run(url, headers: self.streamHeaders?() ?? [:])
+                    }
                     if self.wantsPlayback { self.enterStalled() } else { self.state = .failed(msg) }
                 default: break
                 }
@@ -598,5 +612,63 @@ public final class PlaybackEngine: NSObject {
     private func cancelRecovery() {
         recoveryTimer?.cancel()
         recoveryTimer = nil
+    }
+}
+
+
+/// Diagnostics for a stream the player couldn't open: replays the request
+/// chain without following redirects and logs each hop's status, redirect
+/// target and (for playlists) first lines, all redacted. Once per URL path.
+enum StreamProbe {
+    private static var probed = Set<String>()
+    private static let lock = NSLock()
+
+    private final class NoRedirect: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ s: URLSession, task: URLSessionTask, willPerformHTTPRedirection r: HTTPURLResponse,
+                        newRequest: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+
+    static func run(_ url: URL, headers: [String: String]) {
+        let fresh = lock.withLock { probed.insert(url.path).inserted }
+        guard fresh else { return }
+        Task.detached {
+            let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
+            defer { session.finishTasksAndInvalidate() }
+            for (label, h) in [("no-header", [String: String]()), ("auth-header", headers)] {
+                var next: URL? = url
+                var hop = 0
+                while let u = next, hop < 4 {
+                    hop += 1
+                    next = nil
+                    var req = URLRequest(url: u, timeoutInterval: 20)
+                    req.setValue("bytes=0-2047", forHTTPHeaderField: "Range")
+                    h.forEach { req.setValue($1, forHTTPHeaderField: $0) }
+                    do {
+                        let (data, resp) = try await session.data(for: req)
+                        guard let http = resp as? HTTPURLResponse else { break }
+                        let type = http.value(forHTTPHeaderField: "Content-Type") ?? "-"
+                        var line = "[Probe] \(label) hop\(hop) \(http.statusCode) type=\(type) \(DebugLog.redacted(u))"
+                        if let loc = http.value(forHTTPHeaderField: "Location") {
+                            line += " → \(DebugLog.redacted(URL(string: loc, relativeTo: u) ?? u))"
+                            next = URL(string: loc, relativeTo: u)?.absoluteURL
+                        } else if type.contains("mpegurl") || type.contains("text"),
+                                  let text = String(data: data.prefix(600), encoding: .utf8) {
+                            let body = text.split(separator: "\n").prefix(8).joined(separator: " | ")
+                            line += " body: \(body)"
+                            // Follow the first variant playlist, if any.
+                            if let v = text.split(separator: "\n").first(where: { !$0.hasPrefix("#") && !$0.isEmpty }),
+                               v.contains(".m3u8") {
+                                next = URL(string: String(v), relativeTo: u)?.absoluteURL
+                            }
+                        }
+                        DebugLog.write(line)
+                    } catch {
+                        DebugLog.write("[Probe] \(label) hop\(hop) error \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
     }
 }

@@ -47,9 +47,10 @@ public enum DebugLog {
     public static func redacted(_ url: URL) -> String { redact(url.absoluteString) }
 
     private static func redact(_ s: String) -> String {
-        guard s.contains("api_key") || s.contains("Token") else { return s }
+        let lower = s.lowercased()
+        guard lower.contains("api_key") || lower.contains("apikey") || s.contains("Token") else { return s }
         return s
-            .replacingOccurrences(of: #"api_key=[^&\s"]+"#, with: "api_key=***",
+            .replacingOccurrences(of: #"(?i)(api_?key)=[^&\s"]+"#, with: "$1=***",
                                   options: .regularExpression)
             .replacingOccurrences(of: #"Token=\"[^\"]+\""#, with: "Token=\"***\"",
                                   options: .regularExpression)

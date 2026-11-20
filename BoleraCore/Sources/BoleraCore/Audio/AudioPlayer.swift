@@ -925,7 +925,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
             } else if let client = client {
                 url = client.playbackStreamURL(for: item.Id)
             } else { continue }
-            let opts: [String: Any] = [AVURLAssetPreferPreciseDurationAndTimingKey: false]
+            var opts: [String: Any] = [AVURLAssetPreferPreciseDurationAndTimingKey: false]
+            if !url.isFileURL, let h = authManager?.authHeader() {
+                opts["AVURLAssetHTTPHeaderFieldsKey"] = ["Authorization": h]
+            }
             let asset = AVURLAsset(url: url, options: opts)
             preloadedAssets[item.Id] = asset
             // Kick off async key load so playable/tracks/duration land
@@ -966,6 +969,10 @@ public final class AudioPlayer: NSObject, ObservableObject {
             let s = client.playbackStream(for: trackId, maxBitrateOverride: cap,
                                           startTimeSeconds: startAt)
             return PlaybackEngine.Stream(url: s.url, offset: s.timelineOffset)
+        }
+        engine.streamHeaders = { [weak self] in
+            guard let h = self?.authManager?.authHeader() else { return [:] }
+            return ["Authorization": h]
         }
         engine.attachProcessor = { [weak self] player, item in
             guard let self, let proc = self.processor,

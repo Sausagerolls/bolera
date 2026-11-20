@@ -1164,7 +1164,14 @@ public struct JellyfinClient {
         // whole player had to add and subtract. All of it can go. The real
         // container list comes back too, so a source inside the cap direct-plays
         // (range-safe, no re-encode) instead of being forced through ffmpeg.
-        let containers = "mp3,aac,m4a,flac,alac,wav,ogg,opus,webma"
+        // Only lossy formats may direct-play under a cap. With FLAC/ALAC/WAV in
+        // this list the server direct-played lossless files on mobile data,
+        // ignoring MaxStreamingBitrate (seen 2026-11-20 on 1.4.6 build 66).
+        // Lossless never fits a ≤320 kbps cap, so leaving those formats out
+        // forces the transcode. `m4a|aac` lets AAC .m4a through but not ALAC
+        // in the same container. A lossy file above the cap is still left to
+        // the server's own bitrate check.
+        let containers = "mp3,aac,m4a|aac,m4b|aac"
         let items = [
             URLQueryItem(name: "UserId", value: auth.userId ?? ""),
             URLQueryItem(name: "DeviceId", value: AuthManager.deviceId),
